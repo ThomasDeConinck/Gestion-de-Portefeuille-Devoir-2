@@ -98,7 +98,8 @@ def importClean_rf(csv_file_path):
 
 def max_sharpe(z_bar, Sigma, Rf, short_allowed = False):
     """
-    Optimise les poids des actifs dans le portefeuille qui maximise le ratio de Sharpe avec et sans contrainte de vente à découvert.
+    Calcul les poids optimisés des actifs dans le portefeuille qui maximisent le ratio de Sharpe avec et sans contrainte de vente à découvert,
+    en utilisant le solveur de programmation linéaire GUROBI.
 
     Parameters:
     - z_bar (Series): Les rendements attendus de chacun des actifs.
@@ -276,12 +277,13 @@ def Market_Cap_Weighted_Portfolio(df_average_firm_size, df_number_firm):
 
 def MV_optimize_portfolio(z_bar, Sigma, short_allowed=False):
     """
-    Optimise le portefeuille qui minimise la variance du portefeuille avec une contrainte de retour cible (mu_target) en utilisant la programmation linéaire.
+    Calcul les poids optimaux qui minimisent la variance du portefeuille avec une contrainte de budget dans les deux cas avec et sans contrainte de vente à découvert,
+    en utilisant le solveur de programmation linéaire GUROBI.
     
     Parameters:
-    - z_bar (Series): Série pandas contenant les rendements attendus pour chaque actif du portefeuille.
+    - z_bar (Series): Série pandas contenant les rendements attendus pour chaque actif du portefeuille d'industrie.
     - Sigma (DataFrame): DataFrame pandas représentant la matrice de covariance des rendements des actifs du portefeuille. 
-    - short_allowed (bool): Booléen indiquant si les positions de ventes à découvert sont autorisées (True) ou non (False).
+    - short_allowed (bool): Booléen indiquant si les positions de ventes à découvert sont autorisées (True) ou non autorisées (False).
 
     Returns:
     - df_results (pd.DataFrame): Un DataFrame pandas contenant les poids optimaux pour chaque actif (optimal_w) si l'optimisation a convergé vers une solution.
@@ -293,7 +295,7 @@ def MV_optimize_portfolio(z_bar, Sigma, short_allowed=False):
     # mu_target = 0.02  
 
     # Création d'un nouveau modèle d'optimisation linéaire
-    m = gp.Model("portfolio")
+    m = gp.Model("MV_portfolio")
 
     # Création de variables pour les poids de chaque actif dans le portefeuille
     if short_allowed:
@@ -328,3 +330,187 @@ def MV_optimize_portfolio(z_bar, Sigma, short_allowed=False):
         return None
     
     return df_results
+
+
+def rolling_window_optimization(df,df_rf, df_average_firm_size, df_number_firm, window_size, optimization_type):
+    """
+    Calculate portfolio weights for each window using a rolling window based on the specified optimization type.
+
+    Parameters:
+    - df (DataFrame): DataFrame containing asset returns for each month with dates as index.
+    - df_rf (DataFrame): DataFrame containing risk-free rate for each month with dates as index.
+    - df_average_firm_size (DataFrame): DataFrame containing average firm size for each month with dates as index.
+    - df_number_firm (DataFrame): DataFrame containing number of firms for each month with dates as index.
+    - window_size (int): Size of the rolling window in months.
+    - optimization_type (str): Type of portfolio optimization to perform ('min_variance' for minimum variance portfolio, or other types as needed).
+
+    Returns:
+    - results_df (DataFrame): DataFrame containing portfolio weights (weights_df) for each rolling window with associated dates as the index (In-sample weights).
+    """   
+
+    
+    results = []
+    dates = []
+    weights_df = None
+    
+    
+    # Itérer sur chaque fenêtre de la taille spécifiée
+    for start_idx in range(len(df) - window_size + 1): 
+        window_data = df.iloc[start_idx:start_idx + window_size] # Récupère les rendements pour la fenêtre actuelle
+        end = start_idx + window_size 
+        window_rf = df_rf.iloc[end - 1, 0] # Récupère le taux sans risque pour le dernier mois de la fenêtre roulante 
+        window_average_firm_size = df_average_firm_size.iloc[start_idx:start_idx + window_size] # Récupère les tailles moyennes des entreprises pour la fenêtre actuelle
+        window_number_firm = df_number_firm.iloc[start_idx:start_idx + window_size] # Récupère le nombre d'entreprises pour la fenêtre actuelle 
+        
+        # Calcul de la matrice de covariance et du rendement attendu pour la fenêtre actuelle 
+        Sigma = window_data.cov()
+        z_bar = window_data.mean()
+
+        # Appel des sept fonctions d'optimisation de portefeuille
+        # Call the minimum variance portfolio optimization function with short selling allowed
+        if optimization_type == 'min_variance_short_allowed':
+            weights_df = MV_optimize_portfolio(z_bar, Sigma, short_allowed= True)
+            
+        # Call the maximum sharpe ratio portfolio optimization function with short selling not allowed
+        elif optimization_type == 'max_sharpe_no_short':
+            weights_df = max_sharpe(z_bar, Sigma, window_rf, short_allowed= False)
+            
+        # Call the maximum sharpe ratio portfolio optimization function with short selling allowed
+        elif optimization_type == 'max_sharpe_short_allowed':
+            weights_df = max_sharpe(z_bar, Sigma, window_rf, short_allowed= True)
+            
+        # Call the inverse variance portfolio optimization function
+        elif optimization_type == 'inv_variance_weights':
+            weights_df = Inverse_Variance_Portfolio(Sigma)
+        
+        # Call the inverse volatility portfolio optimization function
+        elif optimization_type == 'inv_volatility_weights':
+            weights_df = Inverse_Volatility_Portfolio(Sigma)
+        
+        # Call the equally weighted portfolio optimization function
+        elif optimization_type == 'equal_weights':
+            weights_df = Equally_Weighted_Portfolio(df_10Ind.columns)
+        
+        # Call the market cap weighted portfolio optimization function    
+        elif optimization_type == 'market_cap_weights':
+            weights_df = Market_Cap_Weighted_Portfolio(window_average_firm_size, window_number_firm)
+            
+        # Vérifie si l'optimisation a retourné des résultats 
+        if weights_df is not None:  
+            
+            # Récupération des poids pour l'optimisation market_cap_weights puisque les poids sont stockés dans un DataFrame 
+            if isinstance(weights_df.index, pd.DatetimeIndex):
+                weights = weights_df.iloc[-1, :].tolist()
+            else:
+                weights = weights_df.loc[0, df.columns].tolist() # Récupère les poids optimaux pour la fenêtre actuelle
+            results.append(weights) 
+
+            dates.append(window_data.index[-1]) # Utilisation de l'index pour la date de fin de la fenêtre
+        # Si l'optimisation a échoué, affiche un message d'erreur
+        else:
+            print(f"Optimization failed for the window ending on {window_data.index[-1]}")
+         
+            
+    # Création du DataFrame des résultats
+    results_df = pd.DataFrame(results, index=dates, columns=df.columns)
+    return results_df
+
+
+def Out_of_sample_portfolio_returns(results_df, df):
+    """
+    Calculate the monthly out-of-sample returns of the portfolios using the optimized in-sample weights.
+    
+    Parameters:
+    - results_df (DataFrame): DataFrame containing portfolio weights (weights_df) for each rolling window with associated dates as the index (In-sample weights).
+    - df (DataFrame): DataFrame containing asset returns for each month with dates as the index (used to calculate the portfolio returns).
+    
+    Returns:
+    - DataFrame: The same 'results_df' DataFrame containing optimized in-sample weights with an additional column 'Portfolio Monthly Return' containing the calculated returns for the optimized portfolios (out-of-sample returns).
+    """
+    
+    
+    portfolio_monthly_returns = []
+    
+    # Itére sur chaque ligne de 'results_df' pour accéder aux poids optimisés de chaque fenêtre
+    for index, row in results_df.iterrows():
+        next_month = index + pd.DateOffset(months=1) # Calcule la date correspondant au mois suivant la fin de la fenêtre roulante
+        if next_month in df.index:
+            next_month_returns = df.loc[next_month]  # Extrait les rendements des actifs pour le mois suivant
+            weights = row.values # Extrait les poids optimisés du portefeuille pour la fenêtre actuelle
+            portfolio_return = np.dot(weights, next_month_returns) # Calcule le rendement du portefeuille pour le mois suivant
+            portfolio_monthly_returns.append(portfolio_return) # Ajouter le rendement calculé du portefeuille à la liste des rendements mensuels
+        else:
+            portfolio_monthly_returns.append(None)
+    
+    # Ajouter la liste des rendements mensuels calculés à 'results_df' comme nouvelle colonne
+    results_df['Portfolio Monthly Return'] = portfolio_monthly_returns
+    return results_df
+
+
+def plot_cumulative_returns(df, strategies):
+    """
+    Cette fonction plot les rendements cumulatifs pour les 7 stratégies de portefeuilles d'industries. 
+
+    Parameters:
+    - df: DataFrame contenant les données de rendement.
+    - strategies: Liste des stratégies à utiliser dans le tracé des rendements cumulatifs.
+    
+    Returns : 
+    - Plot des rendements cumulatifs pour les 7 stratégies de portefeuilles d'industries.
+    """
+    
+    
+    def calculer_retours_cumulatifs(mensual_returns):
+        """
+        Cette fonction calcule les retours cumulatifs à partir des séries temporelles de rendements mensuels pour les 7 stratégies de portefeuille.
+
+        Parameters:
+        - mensual_returns: Séries pandas contenant les retours mensuels du portefeuille sélectionné en décimal.
+        
+        Returns : 
+        - cumulative_returns: Séries pandas contenant les retours cumulatifs du portefeuille sélectionné en décimal.
+        """
+        
+        
+        # Convertir les pourcentages en décimales et ajouter 1
+        adjusted_returns = mensual_returns / 100 + 1
+
+        # Calculer les retours cumulatifs avec la fonction cumprod() de pandas qui calcule le produit cumulatif des retours mensuels
+        cumulative_returns = adjusted_returns.cumprod()
+
+        return cumulative_returns
+
+    # Initialiser le dictionnaire pour stocker les résultats de chaque stratégie de portefeuille 
+    results_dict = {}
+
+    # Boucle sur chaque stratégie de portefeuille 
+    for strategy in strategies:
+        # Appeler la fonction d'optimisation pour chaque stratégie et calculer les rendements du portefeuille sur la bonne fenêtre roulante d'optimisation
+        results_df = calculate_portfolio_returns(rolling_window_optimization(df, df_rf, df_average_firm_size, df_number_firm, 60, optimization_type=strategy), df)
+        
+        # Stocker les résultats dans le dictionnaire 
+        results_dict[strategy] = results_df
+
+    # Définir la taille de la figure à plotter
+    plt.figure(figsize=(15,10))
+
+    # Boucle sur chaque stratégie de portefeuille pour tracer les rendements cumulatifs 
+    for strategy in strategies:
+        # Récupérer les rendements de la stratégie
+        results_with_returns = results_dict[strategy]
+        
+        # Supprimer les valeurs manquantes dans les rendements mensuels pour la dernière date 2024-01-01
+        results_with_returns['Portfolio Monthly Return'].dropna(inplace=True)
+        
+        # Calculer les rendements cumulatifs
+        results_with_returns['Cumulative Return'] = calculer_retours_cumulatifs(results_with_returns['Portfolio Monthly Return'])
+
+        # Tracer les rendements cumulatifs pour chaque stratégie
+        plt.plot(results_with_returns.index, results_with_returns['Cumulative Return'], label=strategy)
+
+    plt.title('Rendements cumulatifs des stratégies de portefeuilles (hors échantillon)')
+    plt.xlabel('Date')
+    plt.ylabel('Rendements cumulatifs (%)')  
+    plt.legend()
+    plt.grid(True)
+    plt.show()
