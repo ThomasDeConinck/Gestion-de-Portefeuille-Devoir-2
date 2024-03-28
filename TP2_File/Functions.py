@@ -56,7 +56,7 @@ def importClean_10ind(csv_file_path, desired_returns):
     # Retourner le DataFrame et fixer la 'Date' comme index  
     df = df_AEWR_monthly.set_index('Date', drop=True)
     
-    return (df)
+    return df
 
 
 def importClean_rf(csv_file_path):
@@ -119,11 +119,16 @@ def max_sharpe(z_bar, Sigma, Rf, short_allowed = False):
     # Initialiser le modèle d'optimisation
     model = gp.Model("max_sharpe")
     
+    # Désactiver l'affichage de la console 
+    model.Params.LogToConsole = 0
+    model.Params.OutputFlag = 0
+
     # Définir les variables de décision: les poids y et la variable auxiliaire kappa
     if short_allowed : 
         y = model.addVars(assets, lb=-100.0, name='weights')
     else: 
         y = model.addVars(assets, lb=0, name='weights')
+    
     kappa = model.addVar(lb=0.0, name='kappa') 
     
     # Construire le vecteur des poids y
@@ -140,8 +145,7 @@ def max_sharpe(z_bar, Sigma, Rf, short_allowed = False):
     # Définir l'objectif: Minimiser la variance du portefeuille (Maximiser le ratio de Sharpe)
     model.setObjective(sigma_p, GRB.MINIMIZE)
     
-    # Exécuter l'optimisation (sans affichage de console)
-    model.Params.LogToConsole = 0
+    # Exécuter l'optimisation
     model.optimize()
     
     # Vérifier si la solution optimale a été trouvée
@@ -357,8 +361,11 @@ def rolling_window_optimization(df,df_rf, df_average_firm_size, df_number_firm, 
     # Itérer sur chaque fenêtre de la taille spécifiée
     for start_idx in range(len(df) - window_size + 1): 
         window_data = df.iloc[start_idx:start_idx + window_size] # Récupère les rendements pour la fenêtre actuelle
-        end = start_idx + window_size 
-        window_rf = df_rf.iloc[end - 1, 0] # Récupère le taux sans risque pour le dernier mois de la fenêtre roulante 
+        end = start_idx + window_size # Calcule l'indice de fin de la fenêtre roulante en cours
+
+        # Récupère le taux sans risque moyen pour la fenêtre roulante en cours 
+        window_rf = df_rf.iloc[start_idx:end]['RF'].mean()
+
         window_average_firm_size = df_average_firm_size.iloc[start_idx:start_idx + window_size] # Récupère les tailles moyennes des entreprises pour la fenêtre actuelle
         window_number_firm = df_number_firm.iloc[start_idx:start_idx + window_size] # Récupère le nombre d'entreprises pour la fenêtre actuelle 
         
@@ -389,7 +396,7 @@ def rolling_window_optimization(df,df_rf, df_average_firm_size, df_number_firm, 
         
         # Call the equally weighted portfolio optimization function
         elif optimization_type == 'equal_weights':
-            weights_df = Equally_Weighted_Portfolio(df_10Ind.columns)
+            weights_df = Equally_Weighted_Portfolio(df.columns)
         
         # Call the market cap weighted portfolio optimization function    
         elif optimization_type == 'market_cap_weights':
@@ -460,7 +467,7 @@ def plot_cumulative_returns(df, strategies):
     """
     
     
-    def calculer_retours_cumulatifs(mensual_returns):
+    def cumulative_returns_calculation(mensual_returns):
         """
         Cette fonction calcule les retours cumulatifs à partir des séries temporelles de rendements mensuels pour les 7 stratégies de portefeuille.
 
@@ -486,7 +493,7 @@ def plot_cumulative_returns(df, strategies):
     # Boucle sur chaque stratégie de portefeuille 
     for strategy in strategies:
         # Appeler la fonction d'optimisation pour chaque stratégie et calculer les rendements du portefeuille sur la bonne fenêtre roulante d'optimisation
-        results_df = calculate_portfolio_returns(rolling_window_optimization(df, df_rf, df_average_firm_size, df_number_firm, 60, optimization_type=strategy), df)
+        results_df = Out_of_sample_portfolio_returns(rolling_window_optimization(df, df_rf, df_average_firm_size, df_number_firm, 60, optimization_type=strategy), df)
         
         # Stocker les résultats dans le dictionnaire 
         results_dict[strategy] = results_df
@@ -503,7 +510,7 @@ def plot_cumulative_returns(df, strategies):
         results_with_returns['Portfolio Monthly Return'].dropna(inplace=True)
         
         # Calculer les rendements cumulatifs
-        results_with_returns['Cumulative Return'] = calculer_retours_cumulatifs(results_with_returns['Portfolio Monthly Return'])
+        results_with_returns['Cumulative Return'] = cumulative_returns_calculation(results_with_returns['Portfolio Monthly Return'])
 
         # Tracer les rendements cumulatifs pour chaque stratégie
         plt.plot(results_with_returns.index, results_with_returns['Cumulative Return'], label=strategy)
@@ -512,5 +519,47 @@ def plot_cumulative_returns(df, strategies):
     plt.xlabel('Date')
     plt.ylabel('Rendements cumulatifs (%)')  
     plt.legend()
-    plt.grid(True)
     plt.show()
+
+
+def calculate_sharpe_ratios(df, df_rf, strategies):
+    """
+    Cette fonction calcule le ratio de Sharpe pour les sept stratégies de portefeuille backtestées.
+
+    Parameters:
+    - df: DataFrame contenant les données de rendement des 10 industries.
+    - df_rf: DataFrame contenant les données du taux sans risque mensuel.
+    - strategies: Liste des stratégies de portefeuille backtestées.
+    - window: Fenêtre temporelle pour l'optimisation du portefeuille.
+
+    Returns:
+    - sharpe_ratios_df: DataFrame contenant le ratio de Sharpe pour chaque stratégie de portefeuille.
+    """
+
+
+    # Dictionnaire pour stocker les ratios de Sharpe pour chaque stratégie
+    sharpe_ratios = {}
+
+    # Calculer les rendements du portefeuille pour chaque stratégie
+    for strategy in strategies:
+        results = Out_of_sample_portfolio_returns(rolling_window_optimization(df, df_rf, df_average_firm_size, df_number_firm, window_size=60, optimization_type=strategy), df)
+        
+        # Extraire les rendements du portefeuille
+        portfolio_returns = results['Portfolio Monthly Return']
+        # Supprimer les valeurs manquantes dans les rendements mensuels pour la dernière date 2024-01-01
+        portfolio_returns.dropna(inplace=True)
+        
+        # Calculer le ratio de Sharpe pour chaque stratégie de portefeuille
+        portfolio_variance = portfolio_returns.var()
+        Sigma = np.sqrt(portfolio_variance)
+        # Calcul du ratio de sharpe en utilisant la moyenne des rendements mensuels (OO-Sample) de la stratégie,
+        # la moyenne des rendements du taux sans risque sur l'ensemble de l'échantillon et l'écart-type des rendements (OO-sample) du portefeuille
+        sharpe_ratio = (portfolio_returns.mean() - df_rf['RF'].mean()) / Sigma
+        
+        # Stocker le ratio de Sharpe dans le dictionnaire 
+        sharpe_ratios[strategy] = sharpe_ratio
+
+    # Convertir le dictionnaire en DataFrame
+    sharpe_ratios_df = pd.DataFrame(list(sharpe_ratios.items()), columns=['Strategy', 'Sharpe Ratio'])
+
+    return sharpe_ratios_df
