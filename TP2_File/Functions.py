@@ -538,55 +538,69 @@ def format_value(val, strategy, decimal_format='{:,.4f}', exponential_format='{:
         return decimal_format.format(val)
       
       
-def calculate_annualized_statistics(strategies_results, periods):
+def annualized_statistics_and_sharpe_ratios(strategies_results, periods, df_rf):
     """
-    Calcule les statistiques résumées pour les rendements out-of-sample de différentes stratégies de portefeuille
-    sur des périodes définies.
+    Calcule les statistiques annualisées pour les rendements hors échantillon de différentes stratégies de portefeuille sur des périodes spécifiées,
+    et détermine les ratios de Sharpe annuels pour ces stratégies.
 
-    Paramètres:
-    - strategies_results (dict): Dictionnaire de DataFrames, où chaque clé est le nom d'une stratégie et chaque valeur est
-      un DataFrame contenant les résultats pour les poids optimaux de cette stratégie, y compris les 'Portfolio Monthly Return'.
-    - periods (list of tuples): Liste de tuples contenant la date de début et la date de fin d'une période à analyser,
-      au format ('YYYY-MM-DD', 'YYYY-MM-DD').
+    Paramètres :
+    - strategies_results (dict) : Dictionnaire de DataFrames, où chaque clé représente le nom d'une stratégie et chaque valeur est
+      un DataFrame contenant les résultats pour les poids optimaux de cette stratégie, y compris les 'Rendements Mensuels du Portefeuille'.
+    - periods (liste de tuples) : Liste de tuples contenant la date de début et la date de fin d'une période à analyser,
+      au format ('AAAA-MM-JJ', 'AAAA-MM-JJ').
+    - df_rf (DataFrame) : DataFrame contenant les taux sans risque mensuels.
 
-    Retourne:
-    - DataFrame contenant la moyenne annualisée et l'écart-type annualisé des rendements mensuels du portefeuille pour chaque stratégie
-      et chaque période spécifiée.
+    Retour :
+    - DataFrame contenant la moyenne annualisée et l'écart-type annualisé des rendements mensuels du portefeuille, ainsi que les ratios de Sharpe
+      pour chaque stratégie et chaque période spécifiée.
     """
     
     
     results = []
+
+    # Calculer le taux sans risque mensuel moyen et l'annualiser selon la formule du taux de rendement annuel composé (CAGR), 
+    # pour obtenir le taux sans risque annuel moyen
+    mean_rf_monthly = df_rf['RF'].mean()
+    mean_rf_annual = ((1 + mean_rf_monthly/100) ** 12 - 1) 
+    
+    # Convertir en pourcentage pour faciliter les manipulations par la suite
+    mean_rf_annual *= 100
 
     for strategy_name, strategy_results in strategies_results.items():
         for start_date, end_date in periods:
             # Filtrer les résultats de la stratégie pour la période spécifiée
             period_returns = strategy_results['Portfolio Monthly Return'].loc[start_date:end_date]
 
-            # Calculer la moyenne et l'écart-type des rendements mensuels du portefeuille pour la période indiquée 
+            # Calculer la moyenne et l'écart-type des rendements mensuels du portefeuille pour la période indiquée
             mean_return_monthly = period_returns.mean()
             std_return_monthly = period_returns.std()
 
-            # Annualiser la moyenne et l'écart-type des rendements mensuels,
-            # avec la formule du taux de rendement annuel composé (CAGR)
+            # Annualiser la moyenne et l'écart-type des rendements mensuels, avec la formule du taux de rendement annuel composé (CAGR)
             mean_return_annualized = (1 + mean_return_monthly/100) ** 12 - 1
-            # Convertir en pourcentage pour faciliter les manipulations par la suite
-            mean_return_annualized *= 100
             std_return_annualized = std_return_monthly * np.sqrt(12)
+            
+            # Convertir en pourcentage pour faciliter les manipulations par la suite
+            mean_return_annualized *= 100  
 
-            # Formatage des valeurs en fonction de la stratégie
+            # Calculer le ratio de Sharpe annuel pour chaque stratégie et période
+            sharpe_ratio = (mean_return_annualized - mean_rf_annual) / std_return_annualized
+
+            # Appliquer le formatage adapté à la valeur du ratio de Sharpe
             formatted_mean_return = format_value(mean_return_annualized, strategy_name)
             formatted_std_deviation = format_value(std_return_annualized, strategy_name)
-            
-            # Ajouter les résultats dans la liste 
+            formatted_sharpe_ratio = format_value(sharpe_ratio, strategy_name)
+
+            # Ajouter les résultats à la liste
             results.append({
                 'Strategy': strategy_name,
                 'Start Date': start_date,
                 'End Date': end_date,
                 'Annualized Mean Return': formatted_mean_return,
-                'Annualized Std Deviation': formatted_std_deviation
+                'Annualized Std Deviation': formatted_std_deviation,
+                'Sharpe Ratio': formatted_sharpe_ratio
             })
 
-    # Créer un DataFrame à partir de la liste des résultats 
+    # Créer un DataFrame à partir de la liste des résultats
     results_df = pd.DataFrame(results)
 
     # Définir les noms des stratégies et les périodes comme index du DataFrame
@@ -594,56 +608,3 @@ def calculate_annualized_statistics(strategies_results, periods):
     results_df = results_df.drop(columns=['Strategy', 'Start Date', 'End Date'])
 
     return results_df
-
-
-def calculate_sharpe_ratios(stats, df_rf):
-    """
-    Calcule les ratios de Sharpe pour les sept différentes stratégies de portefeuille sur des périodes définies,
-    en utilisant les rendements annualisés et les écarts-types annualisés pour chaque stratégie. 
-
-    Paramètres:
-    - stats (DataFrame): DataFrame contenant les rendements annualisés et les écarts-types annualisés pour chaque stratégie et période.
-    - df_rf (DataFrame): DataFrame contenant les taux sans risque mensuels pour chaque mois. 
-
-    Retourne:
-    - DataFrame contenant les ratios de Sharpe pour chaque stratégie backtestées et période définies, avec un formatage adapté.
-    """
-
-    # Calcule le taux sans risque mensuel moyen sur toute la période, puis l'annualise pour obtenir le taux sans risque annuel moyen
-    mean_rf_monthly = df_rf['RF'].mean()
-    
-    # Annualisation du taux sans risque mensuel moyen selon la formule du taux de rendement annuel composé (CAGR)
-    mean_rf_annual = ((1 + mean_rf_monthly/100) ** 12 - 1 ) 
-    mean_rf_annual *= 100
-    sharpe_ratios = []
-
-    # Itérer sur chaque ligne du DataFrame des statistiques pour calculer le ratio de Sharpe annuel
-    for index, row in stats.iterrows():
-        strategy, start_date, end_date = index
-
-        # Convertir les rendements annualisés et les écarts-types de formatage (chaîne) à flottant
-        mean_return = float(row['Annualized Mean Return'].replace(',', ''))
-        std_dev = float(row['Annualized Std Deviation'].replace(',', ''))
-
-        # Calculer le ratio de Sharpe annuel pour chaque stratégie et période
-        sharpe_ratio = (mean_return - mean_rf_annual) / std_dev
-
-        # Appliquer le formatage adapté à la valeur du ratio de Sharpe 
-        formatted_sharpe_ratio = format_value(sharpe_ratio, strategy)
-        
-        # Ajouter les résultats dans la liste 
-        sharpe_ratios.append({
-            'Strategy': strategy,
-            'Start Date': start_date,
-            'End Date': end_date,
-            'Sharpe Ratio': formatted_sharpe_ratio
-        })
-        
-     # Créer un DataFrame à partir de la liste des résultats
-    sharpe_df = pd.DataFrame(sharpe_ratios)
-
-    # Définir les noms des stratégies et les périodes comme index du DataFrame 
-    sharpe_df.index = pd.MultiIndex.from_frame(sharpe_df[['Strategy', 'Start Date', 'End Date']])
-    sharpe_df = sharpe_df.drop(columns=['Strategy', 'Start Date', 'End Date'])
-
-    return sharpe_df
