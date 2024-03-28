@@ -161,7 +161,7 @@ def max_sharpe(z_bar, Sigma, Rf, short_allowed = False):
         
         return weights_df
     else:
-        print("Optimization non réussie. Impossible de retrouver la solution.")
+        print("Optimization non réussie. Impossible de retrouver la solution à cette date précise.")
         return None
 
 
