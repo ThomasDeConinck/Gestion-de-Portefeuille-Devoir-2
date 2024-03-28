@@ -454,7 +454,7 @@ def Out_of_sample_portfolio_returns(results_df, df):
     return results_df
 
 
-def plot_cumulative_returns(df, strategies):
+def plot_cumulative_returns(df, strategies, df_rf, df_average_firm_size, df_number_firm):
     """
     Cette fonction plot les rendements cumulatifs pour les 7 stratégies de portefeuilles d'industries. 
 
@@ -499,7 +499,7 @@ def plot_cumulative_returns(df, strategies):
         results_dict[strategy] = results_df
 
     # Définir la taille de la figure à plotter
-    plt.figure(figsize=(15,10))
+    plt.figure(figsize=(9,6))
 
     # Boucle sur chaque stratégie de portefeuille pour tracer les rendements cumulatifs 
     for strategy in strategies:
@@ -522,7 +522,7 @@ def plot_cumulative_returns(df, strategies):
     plt.show()
 
 
-def calculate_sharpe_ratios(df, df_rf, strategies):
+def calculate_sharpe_ratios(df, df_rf, strategies, df_average_firm_size, df_number_firm):
     """
     Cette fonction calcule le ratio de Sharpe pour les sept stratégies de portefeuille backtestées.
 
