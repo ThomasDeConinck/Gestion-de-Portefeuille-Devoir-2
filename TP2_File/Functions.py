@@ -8,12 +8,15 @@ from sklearn.preprocessing import StandardScaler
 import gurobipy as gp
 from gurobipy import GRB
 from scipy.optimize import minimize
+import matplotlib.dates as mdates
+from datetime import datetime
+import os
 
 
 def importClean_10ind(csv_file_path, desired_returns):
     """
     Cette fonction importe des données à partir d'un fichier CSV spécifié, effectue un nettoyage de données,
-    et retourne un DataFrame contenant des données filtrées sans tenir compte de la variable T (nombre d'années).
+    et retourne un DataFrame contenant des données filtrées. 
 
     Args:
         csv_file_path(str): Chemin vers le fichier CSV avec les données brutes.
@@ -27,7 +30,7 @@ def importClean_10ind(csv_file_path, desired_returns):
     with open(csv_file_path, 'r', newline='') as file:
         reader = csv.reader(file)
         
-        # Sauter les 6 premières lignes
+        # Sauter les 10 premières lignes
         for _ in range(10):
             next(reader)
 
@@ -99,11 +102,12 @@ def importClean_rf(csv_file_path):
 def max_sharpe(z_bar, Sigma, Rf, short_allowed = False):
     """
     Calcul les poids optimisés des actifs dans le portefeuille qui maximisent le ratio de Sharpe avec et sans contrainte de vente à découvert,
-    en utilisant le solveur de programmation linéaire GUROBI.
+    en utilisant le solveur de programmation linéaire GUROBI dans le cas avec contrainte sur vente à découverte et analytiquement pour le cas 
+    sans contrainte de vente à découvert.
 
     Parameters:
     - z_bar (Series): Les rendements attendus de chacun des actifs.
-    - Sigma (DataFrame): La matrice de covariance des rendements des actifs. 
+    - Sigma (DataFrame): La matrice de covariance des rendements des actifs.
     - Rf (float): Le taux de rendement sans risque mensuel.
     - short_allowed (bool): Autorise ou non les positions courtes dans le portefeuille.
 
@@ -115,54 +119,67 @@ def max_sharpe(z_bar, Sigma, Rf, short_allowed = False):
     # Identifier les actifs et leur nombre
     assets = z_bar.index
     number_of_assets = len(assets)
-    
-    # Initialiser le modèle d'optimisation
-    model = gp.Model("max_sharpe")
-    
-    # Désactiver l'affichage de la console 
-    model.Params.LogToConsole = 0
-    model.Params.OutputFlag = 0
 
-    # Définir les variables de décision: les poids y et la variable auxiliaire kappa
-    if short_allowed : 
-        y = model.addVars(assets, lb=-100.0, name='weights')
-    else: 
-        y = model.addVars(assets, lb=0, name='weights')
-    
-    kappa = model.addVar(lb=0.0, name='kappa') 
-    
-    # Construire le vecteur des poids y
-    y_vector = [y[i] for i in assets]
+    if short_allowed == False:
+        # Initialiser le modèle d'optimisation
+        model = gp.Model("max_sharpe")
+        
+        # Désactiver l'affichage de la console
+        model.Params.LogToConsole = 0
+        model.Params.OutputFlag = 0
 
-    # Calculer la variance du portefeuille (sigma_p) en fonction des poids y et de la matrice de covariance Sigma 
-    sigma_p = sum(y_vector[i] * y_vector[j] * Sigma.loc[assets[i], assets[j]]
-                    for i in range(number_of_assets) for j in range(number_of_assets))
-    
-    # Ajouter des contraintes au modèle d'optimisation 
-    model.addConstr(sum((z_bar[i] - Rf) * y[i] for i in assets) == 1, "Rendement ajusté") # Contrainte de rendement ajusté normalisé selon k 
-    model.addConstr(sum(y[i] for i in assets) == kappa) # Constrainte nécessaire pour que kappa ne soit pas nul 
-    
-    # Définir l'objectif: Minimiser la variance du portefeuille (Maximiser le ratio de Sharpe)
-    model.setObjective(sigma_p, GRB.MINIMIZE)
-    
-    # Exécuter l'optimisation
-    model.optimize()
-    
-    # Vérifier si la solution optimale a été trouvée
-    if model.status == GRB.OPTIMAL:
-        y_opt = model.getAttr('x', y) # Poids optimaux y
-        kappa_opt = kappa.X # Valeur optimale de kappa
+        # Définir les variables de décision: les poids y et la variable auxiliaire kappa
+        if short_allowed :
+            y = model.addVars(assets, lb=-100.0, name='weights')
+        else:
+            y = model.addVars(assets, lb=0, name='weights')
         
-        # Calculer et ajuster les poids du portefeuille original x à partir de y et kappa 
-        x_opt = {i: y_opt[i] / (kappa_opt) for i in assets}
+        kappa = model.addVar(lb=0.0, name='kappa')
         
-        # Convertir les poids en DataFrame 
-        weights_df = pd.DataFrame([x_opt], columns=assets)
+        # Construire le vecteur des poids y
+        y_vector = [y[i] for i in assets]
+
+        # Calculer la variance du portefeuille (sigma_p) en fonction des poids y et de la matrice de covariance Sigma
+        sigma_p = sum(y_vector[i] * y_vector[j] * Sigma.loc[assets[i], assets[j]]
+                        for i in range(number_of_assets) for j in range(number_of_assets))
         
-        return weights_df
+        # Ajouter des contraintes au modèle d'optimisation
+        model.addConstr(sum((z_bar[i] - Rf) * y[i] for i in assets) == 1, "Rendement ajusté") # Contrainte de rendement ajusté normalisé selon k
+        model.addConstr(sum(y[i] for i in assets) == kappa) # Constrainte nécessaire pour que kappa ne soit pas nul
+        
+        # Définir l'objectif: Minimiser la variance du portefeuille (Maximiser le ratio de Sharpe)
+        model.setObjective(sigma_p, GRB.MINIMIZE)
+        
+        # Exécuter l'optimisation
+        model.optimize()
+        
+        # Vérifier si la solution optimale a été trouvée
+        if model.status == GRB.OPTIMAL:
+            y_opt = model.getAttr('x', y) # Poids optimaux y
+            kappa_opt = kappa.X # Valeur optimale de kappa
+            
+            # Calculer et ajuster les poids du portefeuille original x à partir de y et kappa
+            x_opt = {i: y_opt[i] / (kappa_opt) for i in assets}
+            
+            # Convertir les poids en DataFrame
+            weights_df = pd.DataFrame([x_opt], columns=assets)
+            
+            return weights_df
+        else:
+            print("Optimization non réussie. Impossible de retrouver la solution à cette date précise.")
+            return None
     else:
-        print("Optimization non réussie. Impossible de retrouver la solution à cette date précise.")
-        return None
+        # Utiliser la formule analytique pour les poids du portefeuille tangent (qui maximise le ratio de Sharpe)
+        one = np.ones(number_of_assets)
+        A = np.dot(one, np.dot(np.linalg.inv(Sigma), one.T))
+        B = np.dot(one, np.dot(np.linalg.inv(Sigma), z_bar))
+        w = (np.dot(np.linalg.inv(Sigma), z_bar - Rf*np.ones(number_of_assets))/(B - A*Rf)).tolist()
+
+        # Convertir les poids en DataFrame
+        weights = {n: w[i] for i, n in enumerate(assets)}
+        weights_df = pd.DataFrame([weights], columns=assets)
+
+        return weights_df
 
 
 def Inverse_Variance_Portfolio(Sigma):
@@ -416,7 +433,7 @@ def rolling_window_optimization(df,df_rf, df_average_firm_size, df_number_firm, 
         # Si l'optimisation a échoué, affiche un message d'erreur
         else:
             print(f"Optimization failed for the window ending on {window_data.index[-1]}")
-         
+
             
     # Création du DataFrame des résultats
     results_df = pd.DataFrame(results, index=dates, columns=df.columns)
@@ -522,22 +539,18 @@ def plot_cumulative_returns(df, strategies, df_rf, df_average_firm_size, df_numb
     plt.show()
     
     
-def format_value(val, strategy, decimal_format='{:,.4f}', exponential_format='{:,.2e}'):
+def format_value(val):
     """
-    Cette fonction formate les valeurs numériques pour l'affichage, en utilisant différents formats selon la stratégie spécifiée.
+    Cette fonction formate les valeurs numériques pour l'affichage, en utilisant un format de chaîne de caractères spécifié.
     
-    Objectif:
-    L'objectif de cette fonction est de fournir un moyen cohérent de formater les valeurs numériques (telles que les rendements ou les écarts-types)
-    pour une meilleure lisibilité. En particulier, elle permet un formatage spécial pour les
-    valeurs associées à la stratégie "Max Sharpe Short Allowed", qui sont dans notre cas très grandes et donc mieux représentées en notation exponentielle.
+    Paramètres :
+    - val (float) : Valeur numérique à formater.
     """
     
-    if strategy == 'Max Sharpe Short Allowed':
-        return exponential_format.format(val)
-    else:
-        return decimal_format.format(val)
-      
-      
+    
+    return "{:.4f}".format(val)
+
+
 def annualized_statistics_and_sharpe_ratios(strategies_results, periods, df_rf):
     """
     Calcule les statistiques annualisées pour les rendements hors échantillon de différentes stratégies de portefeuille sur des périodes spécifiées,
@@ -545,14 +558,14 @@ def annualized_statistics_and_sharpe_ratios(strategies_results, periods, df_rf):
 
     Paramètres :
     - strategies_results (dict) : Dictionnaire de DataFrames, où chaque clé représente le nom d'une stratégie et chaque valeur est
-      un DataFrame contenant les résultats pour les poids optimaux de cette stratégie, y compris les 'Rendements Mensuels du Portefeuille'.
+    un DataFrame contenant les résultats pour les poids optimaux de cette stratégie, y compris les 'Rendements Mensuels du Portefeuille'.
     - periods (liste de tuples) : Liste de tuples contenant la date de début et la date de fin d'une période à analyser,
-      au format ('AAAA-MM-JJ', 'AAAA-MM-JJ').
+    au format ('AAAA-MM-JJ', 'AAAA-MM-JJ').
     - df_rf (DataFrame) : DataFrame contenant les taux sans risque mensuels.
 
     Retour :
     - DataFrame contenant la moyenne annualisée et l'écart-type annualisé des rendements mensuels du portefeuille, ainsi que les ratios de Sharpe
-      pour chaque stratégie et chaque période spécifiée.
+    pour chaque stratégie et chaque période spécifiée.
     """
     
     
@@ -586,9 +599,9 @@ def annualized_statistics_and_sharpe_ratios(strategies_results, periods, df_rf):
             sharpe_ratio = (mean_return_annualized - mean_rf_annual) / std_return_annualized
 
             # Appliquer le formatage adapté à la valeur du ratio de Sharpe
-            formatted_mean_return = format_value(mean_return_annualized, strategy_name)
-            formatted_std_deviation = format_value(std_return_annualized, strategy_name)
-            formatted_sharpe_ratio = format_value(sharpe_ratio, strategy_name)
+            formatted_mean_return = format_value(mean_return_annualized)
+            formatted_std_deviation = format_value(std_return_annualized)
+            formatted_sharpe_ratio = format_value(sharpe_ratio)
 
             # Ajouter les résultats à la liste
             results.append({
