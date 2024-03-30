@@ -976,8 +976,9 @@ def plot_cumulative_returns(df, strategies):
         
         # Tracer les rendements cumulatifs pour chaque stratégie
         plt.plot(cumulative_returns.index, cumulative_returns, label=strategy)
-
-    plt.title('Rendements cumulatifs des stratégies de portefeuilles')
+        
+    
+    plt.title('Rendements cumulatifs du portefeuille de benchmark et du portefeuille optimisé')
     plt.xlabel('Date')
     plt.ylabel('Rendements cumulatifs (%)')  
     plt.legend()
