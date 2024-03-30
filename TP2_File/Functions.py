@@ -608,8 +608,8 @@ def annualized_statistics_and_sharpe_ratios(strategies_results, periods, df_rf, 
             std_return_monthly = period_returns.std()
 
             # Annualiser la moyenne et l'écart-type des rendements mensuels, avec la formule du taux de rendement annuel composé (CAGR)
-            mean_return_annualized = (1 + mean_return_monthly/100) ** 12 - 1 if is_decimal else (1 + mean_return_monthly) ** 12 - 1
-            std_return_annualized = std_return_monthly * np.sqrt(12)
+            mean_return_annualized = (1 + mean_return_monthly/100) ** 12 - 1 if not is_decimal else (1 + mean_return_monthly) ** 12 - 1
+            std_return_annualized = std_return_monthly * np.sqrt(12) if not is_decimal else std_return_monthly * np.sqrt(12) * 100
             
             # Convertir en pourcentage pour faciliter les manipulations par la suite
             mean_return_annualized = mean_return_annualized * 100 
@@ -618,8 +618,8 @@ def annualized_statistics_and_sharpe_ratios(strategies_results, periods, df_rf, 
             sharpe_ratio = (mean_return_annualized - mean_rf_annual) / std_return_annualized
 
             # Appliquer le formatage adapté à la valeur du ratio de Sharpe
-            formatted_mean_return = format_value(mean_return_annualized )
-            formatted_std_deviation = format_value(std_return_annualized) 
+            formatted_mean_return = format_value(mean_return_annualized)
+            formatted_std_deviation = format_value(std_return_annualized)
             formatted_sharpe_ratio = format_value(sharpe_ratio)
 
             # Ajouter les résultats à la liste
@@ -670,8 +670,9 @@ def standardize(df):
 
 def calculate_initial_regression_coefficients(N, M, df_48Ind, MC_standardized, BM_standardized, MOM_standardized):
     """
-    Cette fonction calcule les coefficients de régression pour chaque industries en utilisant les données standardisées des caractéristiques et des rendements.
-    Objectif : Estimer une meilleure valeur initiale pour les coefficients thetas à partir d'une régression linéaire des rendements des 48 industries sur les 3 caractéristiques.
+    Cette fonction ajuste un modèle de régression linéaire pour chaque caractéristique (MC, BM, MOM) en utilisant les rendements des actifs comme variable dépendante et les caractéristiques comme variables indépendantes,
+    sur l'ensemble de la période de temps T.  Ensuite la fonction calcule la moyenne des coefficients de régression pour chaque caractéristique à travers tous les actifs, le résultat est utilisé comme estimation initiale 
+    pour les coefficients thetas dans l'optimisation ultérieure.
     
     Paramètres :
     - 'N' (int) : Le nombre d'actifs (48).
@@ -682,8 +683,7 @@ def calculate_initial_regression_coefficients(N, M, df_48Ind, MC_standardized, B
     - 'MOM_standardized' (DataFrame) : Le DataFrame contenant les données standardisées de la caractéristique MOM.
 
     Retour :
-    - Un tableau numpy contenant les coefficients de régression moyens pour chaque caractéristique, 
-    ce qui permet d'obtenir un bon proxy pour les coefficients de régression initiaux.
+    - Un tableau numpy contenant les coefficients de régression moyens pour chaque caractéristique, ce qui permet d'obtenir un bon proxy pour les coefficients thetas initiaux à plugger dans le modèle à optimiser.
     """
     
     
@@ -802,12 +802,67 @@ def Expanding_window_optimization(data, mkt_weights, MC_standardized, BM_standar
         # Guess initial pour theta
         optimal_initial_theta = calculate_initial_regression_coefficients(N, M, data, MC_standardized, BM_standardized, MOM_standardized)
     
-        # Minimize la fonction objectif pour la période courante 
+        # Minimise la fonction objectif pour la période courante 
         result = minimize(objective, optimal_initial_theta, args=(mkt_weights_filtred, MC_filtred, BM_filtred, MOM_filtred, returns_filtred, T, N, M), method='SLSQP')
 
         optimal_thetas[current_end_year] = result.x if result.success else None
 
         # Élargir la fenêtre grandissante pour la prochaine itération en ajoutant 12 mois à la dernière date courante de fin (1 an)
+        current_end_year += pd.DateOffset(months=12)
+
+    return optimal_thetas
+
+
+def Expanding_window_optimization_last_period_initial_theta(data, mkt_weights, MC_standardized, BM_standardized, MOM_standardized, returns):
+    # Define the CRRA utility function 
+    def CRRA_utility(rp, gamma=5):
+        return (1 + rp) ** (1 - gamma) / (1 - gamma)
+
+    # Define the objective function to be maximized, equation(6) from article
+    def objective(theta, mkt_weights, MC, BM, MOM, returns, T, N, M):
+        rp = [sum((mkt_weights.iloc[t, i] + 
+                   (1/N) * (theta[0] * MC.iloc[t, i] + 
+                            theta[1] * BM.iloc[t, i] + 
+                            theta[2] * MOM.iloc[t, i])) 
+                  * (returns.iloc[t+1, i] if t+1 < T else 0)
+                for i in range(N)) for t in range(T)]
+        utility = sum(CRRA_utility(r) for r in rp)
+        return -utility / (T) # Minimize the negative utility (equivalent to maximizing the utility)
+
+    # Boucle de rolling optimization
+    optimal_thetas = {} # Dictionnaire pour stocker les coefficients optimaux pour chaque période
+    start_year = data.index.min() # Date de début fixée à la première date dans les données de rendement
+    initial_end_year = pd.to_datetime('1973-12-01') # Date de fin initiale fixée à décembre 1973
+    current_end_year = initial_end_year # Date de fin courante, commence par initial_end_year et sera ajustée dans la boucle
+
+
+    while current_end_year <= data.index.max(): # Boucle jusqu'à la dernière date dans les données de rendement 
+        
+        # Extraire les composantes nécessaires pour l'optimisation des coefficients pour la période sélectionnée dans la window
+        mkt_weights_filtred = mkt_weights.loc[start_year:current_end_year]
+        MC_filtred = MC_standardized.loc[start_year:current_end_year]
+        BM_filtred = BM_standardized.loc[start_year:current_end_year]
+        MOM_filtred = MOM_standardized.loc[start_year:current_end_year]
+        returns_filtred = returns.loc[start_year:current_end_year]
+        N = len(mkt_weights.columns)
+        M = 3
+        T = len(returns_filtred)
+
+        # Initial guess for theta using the average regression coefficients for the entire period 
+        optimal_initial_theta = calculate_initial_regression_coefficients(N, M, data, MC_standardized, BM_standardized, MOM_standardized) 
+    
+        # Run the optimization for the current period
+        result = minimize(objective, optimal_initial_theta, args=(mkt_weights_filtred, MC_filtred, BM_filtred, MOM_filtred, returns_filtred, T, N, M), method='SLSQP')
+
+        # Store the optimal theta for the current period
+        optimal_thetas[current_end_year] = result.x if result.success else None
+
+        # Updater le theta initial pour la prochaine itération de la fenêtre en utilisant le theta optimal de la dernière itération
+        # pour affiner la convergence vers une solution optimale pour les thetas optimaux, plus stable dans le temps
+        if result.success:
+            optimal_initial_theta = result.x
+
+        # Élargir la fenêtre pour la prochaine itération de window en ajoutant 12 mois à la dernière date courante de fin 
         current_end_year += pd.DateOffset(months=12)
 
     return optimal_thetas
@@ -941,17 +996,19 @@ def calculate_portfolio_returns(opt_weights_monthly, mkt_weights, returns):
     # Calculer les rendements du portefeuille optimisé en utilisant les poids mensuels optimisés
     optimized_portfolio_returns = (opt_weights_monthly * returns.reindex(opt_weights_monthly.index)).sum(axis=1)/100
 
-
     # Aligner les dates des poids du portefeuille de marché avec celles des rendements des actifs
     mkt_weights_aligned = mkt_weights.reindex(returns.reindex(opt_weights_monthly.index).index)
     # Calculer les rendements du portefeuille de marché (Benchmark portfolio) en utilisant les dates alignées
     market_portfolio_returns = (mkt_weights_aligned * returns.reindex(opt_weights_monthly.index)).sum(axis=1)/100
 
+    # Convertir les séries en DataFrame 
+    optimized_port_returns = pd.DataFrame(optimized_portfolio_returns, columns=['Portfolio Monthly Return'])
+    market_port_returns = pd.DataFrame(market_portfolio_returns, columns=['Portfolio Monthly Return'])
 
-    return optimized_portfolio_returns, market_portfolio_returns
+    return optimized_port_returns, market_port_returns
 
 
-def plot_cumulative_returns(df, strategies):
+def plot_cumulative_returns_partC(df, strategies):
     """
     Cette fonction trace les rendements cumulatifs pour les stratégies de portefeuilles spécifiées, de marché et optimisées selon les coefficients theta.
 
