@@ -5,6 +5,7 @@ import gurobipy as gp
 from gurobipy import GRB
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression
 import gurobipy as gp
 from gurobipy import GRB
 from scipy.optimize import minimize
@@ -13,16 +14,18 @@ from datetime import datetime
 import os
 
 
-def importClean_10ind(csv_file_path, desired_returns):
+# Partie A 
+def importClean_Ind(csv_file_path, desired_returns):
     """
     Cette fonction importe des données à partir d'un fichier CSV spécifié, effectue un nettoyage de données,
-    et retourne un DataFrame contenant des données filtrées. 
+    et retourne un DataFrame contenant des données filtrées.
 
     Args:
         csv_file_path(str): Chemin vers le fichier CSV avec les données brutes.
 
-    Returns:
-        DataFrame: DataFrame contenant les données historiques filtrées pour les 10 industries.
+    Return:
+        DataFrame: DataFrame contenant les données historiques filtrées pour les 10 industries, 
+        pour les 48 industries et les facteurs de Fama-French.
     """
 
 
@@ -46,16 +49,31 @@ def importClean_10ind(csv_file_path, desired_returns):
     
     # Si 'desired_returns' est 'Number of Firms in Portfolios' ou 'Average Firm Size', 
     # alors sauter une ligne supplémentaire pour accéder aux données dans le bon format
-    if desired_returns in ['Number of Firms in Portfolios', 'Average Firm Size']:
+    if desired_returns in ['Number of Firms in Portfolios', 'Average Firm Size', 'Sum of BE / Sum of ME']:
         df_AEWR_monthly = df.iloc[first_row.values[0] + 2:].reset_index(drop=True)
     else:
         df_AEWR_monthly = df.iloc[first_row.values[0] + 1:].reset_index(drop=True)
         
     last_row = (df_AEWR_monthly['Date'].str.len() != 6).idxmax()
     df_AEWR_monthly = df_AEWR_monthly.iloc[:last_row]
-    df_AEWR_monthly['Date'] = pd.to_datetime(df_AEWR_monthly['Date'], format='%Y%m')
+    
+    # Adapter le format de la date en fonction de 'desired_returns'
+    # Condition spécifique pour le facteur BtoM (Book-to-Market)
+    if desired_returns in ['Sum of BE / Sum of ME']:  
+        df_AEWR_monthly['Date'] = df_AEWR_monthly['Date'].str.strip()
+        df_AEWR_monthly['Date'] = pd.to_datetime(df_AEWR_monthly['Date'], format='%Y')
+    else:
+        df_AEWR_monthly['Date'] = pd.to_datetime(df_AEWR_monthly['Date'], format='%Y%m')
+    
     df_AEWR_monthly.iloc[:, 1:] = df_AEWR_monthly.iloc[:, 1:].astype(float)
 
+    # Vérifier si le nom du fichier contient '48_Industry_Portfolios.CSV',
+    # pour appliquer un nettoyage supplémentaire pour les NaN values
+    if '48_Industry_Portfolios.CSV' in os.path.basename(csv_file_path):
+        df_AEWR_monthly.replace(-99.99, np.nan, inplace=True)
+        df_AEWR_monthly.replace(-999, np.nan, inplace=True)
+        df_AEWR_monthly.dropna(inplace=True)
+        
     # Retourner le DataFrame et fixer la 'Date' comme index  
     df = df_AEWR_monthly.set_index('Date', drop=True)
     
@@ -70,7 +88,7 @@ def importClean_rf(csv_file_path):
     Args:
         csv_file_path (str): Chemin vers le fichier CSV avec les données brutes.
 
-    Returns:
+    Return:
         DataFrame: DataFrame contenant les données nettoyées pour les taux sans risque.
     """
     
@@ -111,7 +129,7 @@ def max_sharpe(z_bar, Sigma, Rf, short_allowed = False):
     - Rf (float): Le taux de rendement sans risque mensuel.
     - short_allowed (bool): Autorise ou non les positions courtes dans le portefeuille.
 
-    Returns:
+    Return:
     - weights_df (pd.DataFrame): Un dataFrame contenant les poids optimaux de chaque actif dans le portefeuille qui maximise le ratio de sharpe.
     """
     
@@ -189,7 +207,7 @@ def Inverse_Variance_Portfolio(Sigma):
     Parameters:
     - Sigma (Dataframe): La matrice de covariance des rendements des actifs. 
     
-    Returns:
+    Return:
     - normalized_weights (DataFrame): Un dataFrame contenant les poids optimaux (inversement reliés à la variance) de chaque actif dans le portefeuille.
     """
     
@@ -218,7 +236,7 @@ def Inverse_Volatility_Portfolio(Sigma):
     Parameters:
     - Sigma (Dataframe):  DataFrame Pandas représentant la matrice de covariance des rendements des actifs. 
     
-    Returns:
+    Return:
     - normalized_weights_std (Dataframe): Un dataFrame contenant les poids optimaux (inversement reliés à la volatilité) de chaque actif dans le portefeuille.
     """
     
@@ -247,7 +265,7 @@ def Equally_Weighted_Portfolio(assets):
     Parameters:
     - Assets: DataFrame Pandas représentant le nombre d'actifs dans le portefeuille.
     
-    Returns:
+    Return:
     - portfolio_weights (Dataframe) : Un dataFrame contenant des poids égaux pour chaque actif dans le portefeuille 1/N.
     """
     
@@ -306,7 +324,7 @@ def MV_optimize_portfolio(z_bar, Sigma, short_allowed=False):
     - Sigma (DataFrame): DataFrame pandas représentant la matrice de covariance des rendements des actifs du portefeuille. 
     - short_allowed (bool): Booléen indiquant si les positions de ventes à découvert sont autorisées (True) ou non autorisées (False).
 
-    Returns:
+    Return:
     - df_results (pd.DataFrame): Un DataFrame pandas contenant les poids optimaux pour chaque actif (optimal_w) si l'optimisation a convergé vers une solution.
     """
     
@@ -365,7 +383,7 @@ def rolling_window_optimization(df,df_rf, df_average_firm_size, df_number_firm, 
     - window_size (int): Size of the rolling window in months.
     - optimization_type (str): Type of portfolio optimization to perform ('min_variance' for minimum variance portfolio, or other types as needed).
 
-    Returns:
+    Return:
     - results_df (DataFrame): DataFrame containing portfolio weights (weights_df) for each rolling window with associated dates as the index (In-sample weights).
     """   
 
@@ -448,7 +466,7 @@ def Out_of_sample_portfolio_returns(results_df, df):
     - results_df (DataFrame): DataFrame containing portfolio weights (weights_df) for each rolling window with associated dates as the index (In-sample weights).
     - df (DataFrame): DataFrame containing asset returns for each month with dates as the index (used to calculate the portfolio returns).
     
-    Returns:
+    Return:
     - DataFrame: The same 'results_df' DataFrame containing optimized in-sample weights with an additional column 'Portfolio Monthly Return' containing the calculated returns for the optimized portfolios (out-of-sample returns).
     """
     
@@ -479,12 +497,12 @@ def plot_cumulative_returns(df, strategies, df_rf, df_average_firm_size, df_numb
     - df: DataFrame contenant les données de rendement.
     - strategies: Liste des stratégies à utiliser dans le tracé des rendements cumulatifs.
     
-    Returns : 
+    Return : 
     - Plot des rendements cumulatifs pour les 7 stratégies de portefeuilles d'industries.
     """
     
     
-    def cumulative_returns_calculation(mensual_returns):
+    def cumulative_returns_calculation(mensual_returns, is_decimal=False):
         """
         Cette fonction calcule les retours cumulatifs à partir des séries temporelles de rendements mensuels pour les 7 stratégies de portefeuille.
 
@@ -497,7 +515,7 @@ def plot_cumulative_returns(df, strategies, df_rf, df_average_firm_size, df_numb
         
         
         # Convertir les pourcentages en décimales et ajouter 1
-        adjusted_returns = mensual_returns / 100 + 1
+        adjusted_returns = mensual_returns / 100 + 1 if not is_decimal else mensual_returns + 1
 
         # Calculer les retours cumulatifs avec la fonction cumprod() de pandas qui calcule le produit cumulatif des retours mensuels
         cumulative_returns = adjusted_returns.cumprod()
@@ -551,19 +569,20 @@ def format_value(val):
     return "{:.4f}".format(val)
 
 
-def annualized_statistics_and_sharpe_ratios(strategies_results, periods, df_rf):
+def annualized_statistics_and_sharpe_ratios(strategies_results, periods, df_rf, is_decimal=False):
     """
     Calcule les statistiques annualisées pour les rendements hors échantillon de différentes stratégies de portefeuille sur des périodes spécifiées,
     et détermine les ratios de Sharpe annuels pour ces stratégies.
 
-    Paramètres :
+    Parameters:
     - strategies_results (dict) : Dictionnaire de DataFrames, où chaque clé représente le nom d'une stratégie et chaque valeur est
     un DataFrame contenant les résultats pour les poids optimaux de cette stratégie, y compris les 'Rendements Mensuels du Portefeuille'.
     - periods (liste de tuples) : Liste de tuples contenant la date de début et la date de fin d'une période à analyser,
     au format ('AAAA-MM-JJ', 'AAAA-MM-JJ').
     - df_rf (DataFrame) : DataFrame contenant les taux sans risque mensuels.
+    - is_decimal (bool) : Booléen indiquant si les rendements sont en pourcentage (False) ou en décimal (True) pour le calcul.
 
-    Retour :
+    Return:
     - DataFrame contenant la moyenne annualisée et l'écart-type annualisé des rendements mensuels du portefeuille, ainsi que les ratios de Sharpe
     pour chaque stratégie et chaque période spécifiée.
     """
@@ -589,18 +608,18 @@ def annualized_statistics_and_sharpe_ratios(strategies_results, periods, df_rf):
             std_return_monthly = period_returns.std()
 
             # Annualiser la moyenne et l'écart-type des rendements mensuels, avec la formule du taux de rendement annuel composé (CAGR)
-            mean_return_annualized = (1 + mean_return_monthly/100) ** 12 - 1
+            mean_return_annualized = (1 + mean_return_monthly/100) ** 12 - 1 if is_decimal else (1 + mean_return_monthly) ** 12 - 1
             std_return_annualized = std_return_monthly * np.sqrt(12)
             
             # Convertir en pourcentage pour faciliter les manipulations par la suite
-            mean_return_annualized *= 100  
+            mean_return_annualized = mean_return_annualized * 100 
 
             # Calculer le ratio de Sharpe annuel pour chaque stratégie et période
             sharpe_ratio = (mean_return_annualized - mean_rf_annual) / std_return_annualized
 
             # Appliquer le formatage adapté à la valeur du ratio de Sharpe
-            formatted_mean_return = format_value(mean_return_annualized)
-            formatted_std_deviation = format_value(std_return_annualized)
+            formatted_mean_return = format_value(mean_return_annualized )
+            formatted_std_deviation = format_value(std_return_annualized) 
             formatted_sharpe_ratio = format_value(sharpe_ratio)
 
             # Ajouter les résultats à la liste
@@ -621,3 +640,345 @@ def annualized_statistics_and_sharpe_ratios(strategies_results, periods, df_rf):
     results_df = results_df.drop(columns=['Strategy', 'Start Date', 'End Date'])
 
     return results_df
+
+
+# Partie C 
+def standardize(df):
+    """
+    Cette fonction standardise les trois caractéristiques provenant chacunes d'un DataFrame, en utilisant la moyenne et l'écart-type.
+
+    Parameters:
+    - 'df' (DataFrame): Le DataFrame de la caractéristique dont les valeurs doivent être standardisées.
+
+    Return:
+    - Un nouveau DataFrame avec les données standardisées. Les valeurs ont une moyenne de 0 et un écart-type de unitaire. 
+    Les noms de colonnes et les indices sont les mêmes que le DataFrame original.
+    """
+    
+    
+    # StandardScaler() est une classe de la bibliothèque sklearn.preprocessing qui standardise les données
+    # en utilisant la formule (x - moyenne) / écart-type. Cela transforme les données de sorte que leur moyenne soit 0 et leur écart-type soit unitaire.
+    # La méthode fit_transform calcule la moyenne et l'écart-type, puis effectue la transformation.
+    df_scaled = StandardScaler().fit_transform(df)
+
+    # Crée ou nouveau DataFrame avec les données standardisées. On conserve les mêmes noms de colonnes et indices que le DataFrame original.
+    df_standardized = pd.DataFrame(df_scaled, columns=df.columns, index=df.index)
+
+    # Retourne le DataFrame standardisé. Ses valeurs ont une moyenne de 0 et un écart-type de 1.
+    return df_standardized
+
+
+def calculate_initial_regression_coefficients(N, M, df_48Ind, MC_standardized, BM_standardized, MOM_standardized):
+    """
+    Cette fonction calcule les coefficients de régression pour chaque industries en utilisant les données standardisées des caractéristiques et des rendements.
+    Objectif : Estimer une meilleure valeur initiale pour les coefficients thetas à partir d'une régression linéaire des rendements des 48 industries sur les 3 caractéristiques.
+    
+    Paramètres :
+    - 'N' (int) : Le nombre d'actifs (48).
+    - 'M' (int) : Le nombre de caractéristiques (3).
+    - 'df_48Ind' (DataFrame) : Le DataFrame contenant les rendements mensuels des 48 industries.
+    - 'MC_standardized' (DataFrame) : Le DataFrame contenant les données standardisées de la caractéristique MC.
+    - 'BM_standardized' (DataFrame) : Le DataFrame contenant les données standardisées de la caractéristique BM.
+    - 'MOM_standardized' (DataFrame) : Le DataFrame contenant les données standardisées de la caractéristique MOM.
+
+    Retour :
+    - Un tableau numpy contenant les coefficients de régression moyens pour chaque caractéristique, 
+    ce qui permet d'obtenir un bon proxy pour les coefficients de régression initiaux.
+    """
+    
+    
+    model = LinearRegression()
+    
+    # Initialiser la matrice des coefficients de régression
+    theta_initial = np.zeros((N, M))
+    
+    # Ajuster le modèle de régression pour chaque actif et stocker les coefficients
+    for i in range(N):
+        y = df_48Ind.iloc[:, i]
+        X_MC = MC_standardized.iloc[:, i].values.reshape(-1, 1)
+        X_BM = BM_standardized.iloc[:, i].values.reshape(-1, 1)
+        X_MOM = MOM_standardized.iloc[:, i].values.reshape(-1, 1)
+        
+        # Fitter le modèle de régression pour chaque caractéristique et stocker les coefficients
+        model.fit(X_MC, y)
+        theta_initial[i, 0] = model.coef_[0]
+        
+        model.fit(X_BM, y)
+        theta_initial[i, 1] = model.coef_[0]
+        
+        model.fit(X_MOM, y)
+        theta_initial[i, 2] = model.coef_[0]
+
+    # Moyenne des coefficients à travers tous les actifs pour obtenir un bon proxy pour les 3 coefficients initiaux à inclure dans l'optimisation
+    theta_initial = theta_initial.mean(axis=0)
+
+    return theta_initial
+
+
+def Expanding_window_optimization(data, mkt_weights, MC_standardized, BM_standardized, MOM_standardized, returns):
+    """
+    Cette fonction effectue une optimisation de portefeuille pour obtenir les coefficients du modèle (selon l'équation (6) de l'article) en utilisant une fenêtre d'expansion grandissante de 12 mois, 
+    en utilisant les données de rendement des 48 industries, les poids du portefeuille marché (non tilté), et les caractéristiques de style standardisées.
+    
+    Paramètres:
+    - 'data' (DataFrame) : DataFrame contenant les rendements mensuels des 48 industries.
+    - 'mkt_weights' (DataFrame) : DataFrame contenant les poids du portefeuille de marché (non tilté) pour chaque industrie.
+    - 'MC_standardized' (DataFrame) : DataFrame contenant les données standardisées de la caractéristique SMB (Small Minus Big).
+    - 'BM_standardized' (DataFrame) : DataFrame contenant les données standardisées de la caractéristique HML (High Minus Low).
+    - 'MOM_standardized' (DataFrame) : DataFrame contenant les données standardisées de la caractéristique UMD (Up Minus Down).
+    - 'returns' (DataFrame) : DataFrame contenant les rendements mensuels des 48 industries shiftés d'une période pour être à t+1.
+    
+    Retourne:
+    - Un dictionnaire contenant les coefficients optimaux pour chaque période de temps dans la fenêtre d'expansion grandissante.
+    """
+    
+    # définie la fonction d'utilité CRRA à maximiser 
+    def CRRA_utility(rp, gamma=5):
+        return (1 + rp) ** (1 - gamma) / (1 - gamma)
+
+
+    # Définie la fonction objectif à maximiser, équation (6) provenant de l'article 
+    def objective(theta, mkt_weights, MC, BM, MOM, returns, T, N, M):
+        """
+        Cette fonction optimise les coefficients du modèle (selon l'équation (6) de l'article) en minimisant l'utilité négative CRRA, maximisant ainsi l'utilité espérée CRRA,
+        en utilisant les données de rendement, les poids du portefeuille de marché, et les caractéristiques de style standardisées.
+        
+        Paramètres:
+        - 'theta' (array) : Les coefficients du modèle à optimiser selon l'équation (6) de l'article.
+        - 'mkt_weights' (DataFrame) : DataFrame contenant les poids du portefeuille de marché (non tilté) pour chaque industrie.
+        - 'MC' (DataFrame) : DataFrame contenant les données standardisées de la caractéristique SMB (Small Minus Big).
+        - 'BM' (DataFrame) : DataFrame contenant les données standardisées de la caractéristique HML (High Minus Low).
+        - 'MOM' (DataFrame) : DataFrame contenant les données standardisées de la caractéristique UMD (Up Minus Down).
+        - 'returns' (DataFrame) : DataFrame contenant les rendements mensuels des 48 industries shiftés d'une période pour être à t+1.
+        - 'T' (int) : Le nombre de périodes de temps.
+        - 'N' (int) : Le nombre d'actifs (48 industries).
+        - 'M' (int) : Le nombre de caractéristiques de style (3).
+        
+        Retourne:
+        - La valeur de l'utilité espérée CRRA négative moyenne sur la période de temps T.
+        """
+        
+        
+        rp = [sum((mkt_weights.iloc[t, i] + 
+                   (1/N) * (theta[0] * MC.iloc[t, i] + 
+                            theta[1] * BM.iloc[t, i] + 
+                            theta[2] * MOM.iloc[t, i])) 
+                # L'expression (returns.iloc[t+1, i] if t+1 < T else 0) vérifie si t+1 est inférieur à T. 
+                # Si c'est le cas, elle utilise le rendement de l'actif i à la période t+1 (returns.iloc[t+1, i]).
+                # Si t+1 n'est pas inférieur à T (c'est-à-dire, si t+1 est égal à T), elle utilise 0 comme rendement.
+                  * (returns.iloc[t+1, i] if t+1 < T else 0) 
+                for i in range(N)) for t in range(T)]
+        
+        utility_CRRA = sum(CRRA_utility(r) for r in rp)
+        
+        # Minimiser l'utilité négative CRRA (équivalent à maximiser l'utilité espérée CRRA)
+        return -utility_CRRA / (T) 
+
+
+
+    # Boucle de rolling optimization pour chaque période de temp depuis 1973 jusqu'à la dernière date dans les données de rendement
+    optimal_thetas = {} 
+    # Date de début fixée à la première date dans les données de rendement 
+    start_year = data.index.min() 
+    # Date de fin initiale fixée à décembre 1973
+    initial_end_year = pd.to_datetime('1973-12-01') 
+    # Date de fin courante, commence par initial_end_year et sera ajustée dans la boucle 
+    current_end_year = initial_end_year 
+
+        
+    # Boucle jusqu'à la dernière date dans les données de rendement
+    while current_end_year <= data.index.max(): 
+        
+        # Extraire les composantes nécessaires pour l'optimisation des coefficients pour la période sélectionnée dans la window
+        mkt_weights_filtred = mkt_weights.loc[start_year:current_end_year]
+        MC_filtred = MC_standardized.loc[start_year:current_end_year]
+        BM_filtred = BM_standardized.loc[start_year:current_end_year]
+        MOM_filtred = MOM_standardized.loc[start_year:current_end_year]
+        returns_filtred = returns.loc[start_year:current_end_year]
+        N = len(mkt_weights.columns)
+        M = 3
+        T = len(returns_filtred)
+
+        # Guess initial pour theta
+        optimal_initial_theta = calculate_initial_regression_coefficients(N, M, data, MC_standardized, BM_standardized, MOM_standardized)
+    
+        # Minimize la fonction objectif pour la période courante 
+        result = minimize(objective, optimal_initial_theta, args=(mkt_weights_filtred, MC_filtred, BM_filtred, MOM_filtred, returns_filtred, T, N, M), method='SLSQP')
+
+        optimal_thetas[current_end_year] = result.x if result.success else None
+
+        # Élargir la fenêtre grandissante pour la prochaine itération en ajoutant 12 mois à la dernière date courante de fin (1 an)
+        current_end_year += pd.DateOffset(months=12)
+
+    return optimal_thetas
+
+
+def plot_theta_series(optimal_thetas):
+    """
+    Cette fonction convertit le dictionnaire des coefficients optimaux en DataFrame et trace une série temporelle pour chaque coefficient.
+
+    Paramètres:
+    - optimal_thetas : Dictionnaire contenant les coefficients optimaux pour chaque période de temps.
+
+    Retourne:
+    - Plot : Série temporelle pour chaque coefficient theta à travers le temps (T).
+    """
+    
+    
+    # Convertir le dictionnaire en DataFrame 
+    df = pd.DataFrame.from_dict(optimal_thetas, orient='index')
+
+    # Tracer chaque colonne du DataFrame (chaque coefficient theta optimisés)
+    plt.figure(figsize=(12,6))
+    for i in range(df.shape[1]):
+        plt.plot(df.index, df[i], label=f'Theta {i+1}')
+
+    plt.title('Séries temporelles des coefficients theta')
+    plt.legend()
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    plt.gca().xaxis.set_major_locator(mdates.YearLocator())
+    plt.gcf().autofmt_xdate()
+
+    plt.show()
+    
+    
+def portfolio_weight_function(mkt_weights, MC_standardized, BM_standardized, MOM_standardized, optimal_theta):
+    """
+    Calcule les poids optimisés pour chaque actif en multipliant les coefficients optimaux par les caractéristiques standardisées 
+    et en ajustant les poids du marché pour ces ajustements, comme décrit dans l'équation (3) de l'article.
+    
+    Parameters:
+    - mkt_weights (pd.Series): Les poids du marché pour chaque actif au temps t.
+    - MC_standardized (pd.Series): La caractéristique de capitalisation boursière standardisée pour chaque actif au temps t.
+    - BM_standardized (pd.Series): La caractéristique de Book-to-Market standardisée pour chaque actif au temps t.
+    - MOM_standardized (pd.Series): La caractéristique de Momentum standardisée pour chaque actif au temps t.
+    - optimal_theta (np.array): Le vecteur de coefficients theta optimaux pour l'année en cours pour chaque caractéristique.
+    
+    Returns:
+    - Les poids optimisés pour chaque actif, normalisés pour que leur somme soit égale à 1 comme dans l'équation (16) de l'article.
+    """
+    
+    N = len(mkt_weights)
+    optimized_weights = np.zeros(N)
+    
+    # Calculer les pondérations optimisées pour chaque actif en utilisant les coefficients optimaux
+    # multipliés par les caractéristiques standardisées au temps t
+    for i in range(N):
+        initial_weight = mkt_weights.iloc[i]
+        adjustment_caracteristics = (optimal_theta[0] * MC_standardized.iloc[i] + 
+                      optimal_theta[1] * BM_standardized.iloc[i] + 
+                      optimal_theta[2] * MOM_standardized.iloc[i]) / N
+        optimized_weights[i] = initial_weight + adjustment_caracteristics
+
+    # Assurer la positivité des poids optimisés avant de les normaliser 
+    positive_weights = np.maximum(0, optimized_weights)
+    
+    # Normaliser les pondérations de portefeuille pour que leur somme soit égale à 1, 
+    # comme la méthode décrite par l'équation (16) de l'article
+    normalized_weights = positive_weights / np.sum(positive_weights)
+    
+    return normalized_weights
+
+
+def calculate_optimized_weights_monthly(mkt_weights, MC_standardized, BM_standardized, MOM_standardized, optimal_thetas):
+    """
+    Calcule les poids optimisés du portefeuille pour chaque mois, en utilisant la fonction calculate_optimized_weights définies selon l'équation (3).
+    
+    Parameters:
+    - 'mkt_weights' (pd.DataFrame): Les poids du marché pour chaque actif pour chaque mois.
+    - 'MC_standardized' (pd.DataFrame): La caractéristique de capitalisation boursière standardisée pour chaque actif pour chaque mois.
+    - 'BM_standardized' (pd.DataFrame): La caractéristique de Book-to-Market standardisée pour chaque actif pour chaque mois.
+    - 'MOM_standardized' (pd.DataFrame): La caractéristique de Momentum standardisée pour chaque actif pour chaque mois.
+    - 'optimal_thetas' (dict): Un dictionnaire où chaque clé est une année et la valeur est le vecteur de coefficients theta optimaux pour cette année 
+    (12 fois le même vecteur par an).
+    
+    Returns:
+    - 'pd.DataFrame': Un DataFrame où chaque ligne correspond à un mois et chaque colonne correspond à un actif, 
+    et les valeurs sont les poids optimisés selon les ajustements pour les coefficients pour chaque actif.
+    """
+    
+    
+    optimized_weights_monthly = {}
+
+    start_month = pd.Timestamp('1974-01-01')
+    filtered_months = mkt_weights[start_month:].index
+
+    for current_month in filtered_months:
+        current_year = pd.Timestamp(year=current_month.year, month=12, day=1)
+        if current_year not in optimal_thetas:
+            continue
+        mkt_weights_for_month = mkt_weights.loc[current_month]
+        MC_standardized_month = MC_standardized.loc[current_month]
+        BM_standardized_month = BM_standardized.loc[current_month]
+        MOM_standardized_month = MOM_standardized.loc[current_month]
+        
+        # Appliquer les coefficients theta constants à travers les actifs et dans le temps
+        optimized_weights = portfolio_weight_function(mkt_weights_for_month, MC_standardized_month, BM_standardized_month, MOM_standardized_month, optimal_thetas[current_year])
+        
+        optimized_weights_monthly[current_month] = optimized_weights
+        
+    # Convertir le dictionnaire en DataFrame pour une meilleure visualisation
+    optimized_weights_monthly_df = pd.DataFrame.from_dict(optimized_weights_monthly, orient='index', columns=mkt_weights.columns)
+
+    return optimized_weights_monthly_df
+
+
+def calculate_portfolio_returns(opt_weights_monthly, mkt_weights, returns):
+    """
+    Calcule les rendements du portefeuille optimisé et du portefeuille de marché (Benchmark portfolio) selon les poids mensuels optimisés avec l'équation (3)
+    et les rendements des actifs.
+
+    Parameters:
+    - opt_weights_monthly (DataFrame) : DataFrame contenant les poids mensuels du portefeuille parametric optimisé.
+    - mkt_weights (DataFrame) : DataFrame contenant les poids du portefeuille de marché pour chaque actif.
+    - returns (DataFrame) : DataFrame contenant les rendements des actifs shiftés d'une période. 
+
+    Return:
+    - Tuple contenant deux DataFrames : les rendements mensuels du portefeuille optimisé et les rendements mensuels du portefeuille de marché.
+    """
+    
+    
+    # Calculer les rendements du portefeuille optimisé en utilisant les poids mensuels optimisés
+    optimized_portfolio_returns = (opt_weights_monthly * returns.reindex(opt_weights_monthly.index)).sum(axis=1)/100
+
+
+    # Aligner les dates des poids du portefeuille de marché avec celles des rendements des actifs
+    mkt_weights_aligned = mkt_weights.reindex(returns.reindex(opt_weights_monthly.index).index)
+    # Calculer les rendements du portefeuille de marché (Benchmark portfolio) en utilisant les dates alignées
+    market_portfolio_returns = (mkt_weights_aligned * returns.reindex(opt_weights_monthly.index)).sum(axis=1)/100
+
+
+    return optimized_portfolio_returns, market_portfolio_returns
+
+
+def plot_cumulative_returns(df, strategies):
+    """
+    Cette fonction trace les rendements cumulatifs pour les stratégies de portefeuilles spécifiées, de marché et optimisées selon les coefficients theta.
+
+    Parameters:
+    - df: DataFrame contenant les données de rendement pour les deux stratégies de portefeuilles.
+    - strategies: Liste des deux stratégies à utiliser dans le tracé des rendements cumulatifs.
+    """
+    
+    # Définir la taille de la figure à tracer
+    plt.figure(figsize=(11,6))
+
+    # Boucle sur chaque stratégie de portefeuille pour tracer les rendements cumulatifs 
+    for strategy in strategies:
+        # Récupérer les rendements de la stratégie
+        mensual_returns = df[strategy]
+        
+        # Convertir les pourcentages en décimales et ajouter 1
+        adjusted_returns = mensual_returns + 1 
+
+        # Calculer les retours cumulatifs avec la fonction cumprod() qui fait le produit cumulatif des returns mensuels
+        cumulative_returns = adjusted_returns.cumprod()
+        
+        # Tracer les rendements cumulatifs pour chaque stratégie
+        plt.plot(cumulative_returns.index, cumulative_returns, label=strategy)
+
+    plt.title('Rendements cumulatifs des stratégies de portefeuilles')
+    plt.xlabel('Date')
+    plt.ylabel('Rendements cumulatifs (%)')  
+    plt.legend()
+    plt.show()
