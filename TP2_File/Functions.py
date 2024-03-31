@@ -25,7 +25,7 @@ def importClean_Ind(csv_file_path, desired_returns):
 
     Return:
         DataFrame: DataFrame contenant les données historiques filtrées pour les 10 industries, 
-        pour les 48 industries et les facteurs de Fama-French.
+        pour les 48 industries et certains facteurs de Fama-French.
     """
 
 
