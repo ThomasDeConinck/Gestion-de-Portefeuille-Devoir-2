@@ -564,9 +564,6 @@ def plot_cumulative_returns(df, strategies, df_rf, df_average_firm_size, df_numb
         # Stocker les résultats dans le dictionnaire 
         results_dict[strategy] = results_df
 
-    # Définir la taille de la figure à plotter
-    plt.figure(figsize=(9,6))
-
     # Boucle sur chaque stratégie de portefeuille pour tracer les rendements cumulatifs 
     for strategy in strategies:
         # Récupérer les rendements de la stratégie
@@ -1098,14 +1095,16 @@ def get_sharpe_and_constants(caracteristic, df_ret_shift, num_positions, df_FF_d
 
     # Régression avec 3, 4 et 5 facteurs de Fama-French pour obtenir les constantes (Alpha de Jensen)
     constants = []
+    p_values = []
     for num_factors in [3, 4, 5]:
         factors = sm.add_constant(df_FF_5.iloc[:, :num_factors])
         model = sm.OLS(total_returns_df, factors)
         results = model.fit()
         constants.append(results.params['const'])
+        p_values.append(results.pvalues['const'])
 
     # Retourner le ratio de Sharpe et les constantes de régression pour 3, 4 et 5 facteurs 
-    return sharpe_ratio, constants
+    return sharpe_ratio, constants, p_values
 
 
 
@@ -1252,7 +1251,6 @@ def Expanding_window_optimization(data, mkt_weights, MC_standardized, BM_standar
     # Date de fin courante, commence par initial_end_year et sera ajustée dans la boucle 
     current_end_year = initial_end_year 
 
-        
     # Boucle jusqu'à la dernière date dans les données de rendement
     while current_end_year <= data.index.max(): 
         
@@ -1266,9 +1264,9 @@ def Expanding_window_optimization(data, mkt_weights, MC_standardized, BM_standar
         M = 3
         T = len(returns_filtred)
 
-        # Guess initial pour theta
-        optimal_initial_theta = calculate_initial_regression_coefficients(N, M, data, MC_standardized, BM_standardized, MOM_standardized)
-    
+        # Initial guess for theta using the average regression coefficients for the entire period 
+        optimal_initial_theta = calculate_initial_regression_coefficients(N, M, data, MC_standardized, BM_standardized, MOM_standardized) 
+        
         # Minimise la fonction objectif pour la période courante 
         result = minimize(objective, optimal_initial_theta, args=(mkt_weights_filtred, MC_filtred, BM_filtred, MOM_filtred, returns_filtred, T, N, M), method='SLSQP')
 
@@ -1301,8 +1299,8 @@ def Expanding_window_optimization_last_period_initial_theta(data, mkt_weights, M
     start_year = data.index.min() # Date de début fixée à la première date dans les données de rendement
     initial_end_year = pd.to_datetime('1973-12-01') # Date de fin initiale fixée à décembre 1973
     current_end_year = initial_end_year # Date de fin courante, commence par initial_end_year et sera ajustée dans la boucle
-
-
+    
+    
     while current_end_year <= data.index.max(): # Boucle jusqu'à la dernière date dans les données de rendement 
         
         # Extraire les composantes nécessaires pour l'optimisation des coefficients pour la période sélectionnée dans la window
@@ -1484,8 +1482,6 @@ def plot_cumulative_returns_partC(df, strategies):
     - strategies: Liste des deux stratégies à utiliser dans le tracé des rendements cumulatifs.
     """
     
-    # Définir la taille de la figure à tracer
-    plt.figure(figsize=(11,6))
 
     # Boucle sur chaque stratégie de portefeuille pour tracer les rendements cumulatifs 
     for strategy in strategies:
