@@ -6,6 +6,7 @@ from gurobipy import GRB
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
+import statsmodels.api as sm
 import gurobipy as gp
 from gurobipy import GRB
 from scipy.optimize import minimize
@@ -371,6 +372,36 @@ def MV_optimize_portfolio(z_bar, Sigma, short_allowed=False):
     return df_results
 
 
+def MV_portfolio(z_bar, Sigma):
+    """
+    Calcul les poids optimaux qui minimisent la variance du portefeuille sans contrainte de vente à découvert,
+    en utilisant la formule analytique.
+
+    Parameters:
+    - z_bar (Series): Série pandas contenant les rendements attendus pour chaque actif du portefeuille d'industrie.
+    - Sigma (DataFrame): DataFrame pandas représentant la matrice de covariance des rendements des actifs du portefeuille.
+
+    Returns:
+    - df_results (pd.DataFrame): Un DataFrame pandas contenant les poids optimaux pour chaque actif.
+    """
+
+
+    # Récupérer les actifs et leur nombre
+    assets = z_bar.index
+    number_of_assets = len(assets)
+
+    # Appliquer la formule
+    one = np.ones(number_of_assets)
+    lambd = 1/(np.dot(one, np.dot(np.linalg.inv(Sigma), one.T)))
+    w = lambd*np.dot(np.linalg.inv(Sigma), one.T).T
+
+    # Convertir les poids en DataFrame
+    weights = {n: w[i] for i, n in enumerate(assets)}
+    weights_df = pd.DataFrame([weights], columns=assets)
+
+    return weights_df
+
+
 def rolling_window_optimization(df,df_rf, df_average_firm_size, df_number_firm, window_size, optimization_type):
     """
     Calculate portfolio weights for each window using a rolling window based on the specified optimization type.
@@ -411,7 +442,7 @@ def rolling_window_optimization(df,df_rf, df_average_firm_size, df_number_firm, 
         # Appel des sept fonctions d'optimisation de portefeuille
         # Call the minimum variance portfolio optimization function with short selling allowed
         if optimization_type == 'min_variance_short_allowed':
-            weights_df = MV_optimize_portfolio(z_bar, Sigma, short_allowed= True)
+            weights_df = MV_portfolio(z_bar, Sigma)
             
         # Call the maximum sharpe ratio portfolio optimization function with short selling not allowed
         elif optimization_type == 'max_sharpe_no_short':
@@ -640,6 +671,442 @@ def annualized_statistics_and_sharpe_ratios(strategies_results, periods, df_rf, 
     results_df = results_df.drop(columns=['Strategy', 'Start Date', 'End Date'])
 
     return results_df
+
+
+
+# Partie B
+def import_and_prepare_daily_data(csv_file_path):
+    """
+    Importe et prépare les données quotidiennes à partir d'un fichier CSV spécifié pour les 48 Industries 
+    du portefeuille.
+
+    Args:
+    - csv_file_path (str): Le chemin complet vers le fichier CSV contenant les données quotidiennes 
+    des rendements des 48 Industries.
+
+    Return:
+    - pd.DataFrame: Un DataFrame contenant les données quotidiennes nettoyées et préparées 
+        pour les 48 Industries du portefeuille, avec les dates en index.
+    """
+
+
+    # Lecture du fichier CSV, avec l'en-tête à la ligne 6 (index 5)
+    df_daily = pd.read_csv(csv_file_path, header=5)
+
+    # Renommage de la première colonne pour indiquer qu'elle contient les dates
+    df_daily = df_daily.rename(columns={'Unnamed: 0': 'Date'})
+
+    # Copie et préparation des données jusqu'à la ligne spécifiée (25670)
+    df_daily_ret = df_daily.iloc[:25670].copy()
+    df_daily_ret['Date'] = pd.to_datetime(df_daily_ret['Date'], format='%Y%m%d')
+    df_daily_ret.set_index('Date', inplace=True)
+    df_daily_ret = df_daily_ret.apply(pd.to_numeric, errors='coerce')
+    df_daily_ret.replace(-99.99, np.nan, inplace=True)
+    df_daily_ret.replace(-999, np.nan, inplace=True)
+    df_daily_ret.dropna(inplace=True)
+
+    # Sélection d'un sous-ensemble des données à partir de la ligne spécifiée (232)
+    df_daily_ret = df_daily_ret.iloc[231:].copy()
+
+    return df_daily_ret
+
+
+def import_and_clean_FF_3factors_daily(csv_file_path, df_reference):
+    """
+    Importe et nettoie les données des 3 quotidiennes des 3 facteurs Fama-French.
+
+    Args:
+    - csv_file_path (str): Chemin vers le fichier CSV contenant les données quotidiennes des facteurs Fama-French.
+    - df_reference (pd.DataFrame): DataFrame de référence pour aligner les indices de dates, (df_daily_ret) dans cet exemple.
+
+    Return:
+        pd.DataFrame: DataFrame contenant les données quotidiennes des 3 facteurs Fama-French nettoyées et alignées.
+    """
+
+
+    # Lecture du fichier CSV, en supposant que l'en-tête se trouve à la 4ème ligne (index 3)
+    df_FF = pd.read_csv(csv_file_path, header=3)
+
+    # Renommage de la première colonne pour indiquer qu'elle contient les dates
+    df_FF = df_FF.rename(columns={'Unnamed: 0': 'Date'})
+
+    # Sélection des données jusqu'à la ligne spécifiée (25670 dans cet exemple)
+    df_FF_daily = df_FF.iloc[:25670].copy()
+
+    # Conversion de la colonne 'Date' au format datetime
+    df_FF_daily['Date'] = pd.to_datetime(df_FF_daily['Date'], format='%Y%m%d')
+
+    # Définition de la colonne 'Date' comme index du DataFrame
+    df_FF_daily.set_index('Date', inplace=True)
+
+    # Conversion des données en numérique, gestion des erreurs par coercition à NaN
+    df_FF_daily = df_FF_daily.apply(pd.to_numeric, errors='coerce')
+
+    # Remplacement des valeurs erronées ou manquantes spécifiques par NaN
+    df_FF_daily.replace(-99.99, np.nan, inplace=True)
+    df_FF_daily.replace(-999, np.nan, inplace=True)
+
+    # Suppression des lignes contenant des NaN pour assurer la complétude des données
+    df_FF_daily.dropna(inplace=True)
+
+    # Alignement du DataFrame des facteurs Fama-French avec l'index du DataFrame de référence
+    df_FF_daily_aligned = df_FF_daily.reindex(df_reference.index)
+
+    return df_FF_daily_aligned
+
+
+def import_FF_5factors_monthly(csv_file_path, df_reference):
+    """
+    Importe et prépare les données des 5 facteurs de Fama-French à partir d'un fichier CSV contenant les facteurs mensuels.
+
+    Args:
+    - csv_file_path (str): Le chemin complet vers le fichier CSV contenant les données des 5 facteurs de Fama-French.
+    - df_reference (pd.DataFrame): DataFrame momemtum utilisé pour "locker" les données des 5 facteurs sur la base des dates de ce DataFrame.
+
+    Returns:
+        pd.DataFrame: DataFrame contenant les données des 5 facteurs de Fama-French nettoyées et préparées. 
+    """
+
+
+    # Lecture du fichier CSV, l'en-tête se trouve à la 2ème ligne (index 1)
+    df_FF = pd.read_csv(csv_file_path, header=2)
+
+    # Renommage de la première colonne 
+    df_FF = df_FF.rename(columns={'Unnamed: 0': 'Date'})
+
+    # Sélection des données pertinentes jusqu'à la ligne spécifiée (727)
+    df_FF = df_FF.iloc[:727].copy()
+
+    # Conversion de la colonne 'Date' en format datetime 
+    df_FF['Date'] = pd.to_datetime(df_FF['Date'], format='%Y%m')
+
+    # Définition de la colonne 'Date' comme index du DataFrame 
+    df_FF.set_index('Date', inplace=True)
+
+    # Conversion des valeurs du DataFrame en numérique, 
+    # avec gestion des erreurs pour les valeurs non numériques
+    df_FF = df_FF.apply(pd.to_numeric, errors='coerce')
+
+    # Filtrage des données pour ne conserver que les dates présentes dans df_reference
+    df_FF = df_FF.loc[df_reference.index]
+
+    return df_FF
+
+
+
+def calculate_betas(start_date, end_date, df_daily_ret_reshaped, df_FF_daily):
+    # Sélectionner les données pour la plage de dates spécifiée
+    df_daily_ret_selected = df_daily_ret_reshaped.loc[start_date:end_date]
+    df_FF_daily_selected = df_FF_daily.loc[start_date:end_date]
+
+    # Maintenant, vous pouvez utiliser df_daily_ret_selected et df_FF_daily_selected pour votre régression
+    Rft = df_FF_daily_selected['RF']
+    Rm_t = df_FF_daily_selected['Mkt-RF']
+
+    betas = []  # Create an empty list to store the betas
+
+    for column in df_daily_ret_selected.columns:
+        Ri_t = df_daily_ret_selected[column]
+
+        Y = Ri_t - Rft
+        X = Rm_t
+
+        X = sm.add_constant(X)
+
+        model = sm.OLS(Y, X)
+        results = model.fit()
+
+        betas.append(results.params[1])  # Add the betas to the list
+
+    # Convert the list of betas to a numpy array
+    betas = np.array(betas)
+
+    return betas
+
+
+def calculate_monthly_betas(df_daily_ret, df_FF_daily, df_48ind):
+    """
+    Calcule les betas mensuels pour chaque mois à partir des données quotidiennes des rendements des 48 industries du portefeuille, 
+    des facteurs Fama-French quotidiens et des 48 industries.
+
+    Args:
+    - df_daily_ret (pd.DataFrame): DataFrame contenant les rendements quotidiens.
+    - df_FF_daily (pd.DataFrame): DataFrame contenant les facteurs quotidiens de Fama-French.
+    - df_48ind (pd.DataFrame): DataFrame contenant des données pour les 48 industries, utilisé pour définir les indices et les noms des colonnes du résultat final.
+
+    Returns:
+    - pd.DataFrame: DataFrame contenant les betas mensuels pour chaque mois, avec les dates comme index et les industries comme colonnes.
+    """
+    
+    
+    # Obtenir la première et la dernière date dans les données
+    first_date = df_daily_ret.index.min()
+    last_date = df_daily_ret.index.max()
+
+    # Créer une plage de dates pour chaque mois dans les données
+    date_range = pd.date_range(start=first_date, end=last_date, freq='M')
+
+    # Calculer les betas pour chaque mois
+    monthly_betas = {}
+    for date in date_range:
+        start_date = date - pd.DateOffset(months=12)
+        end_date = date
+        betas = calculate_betas(start_date, end_date, df_daily_ret, df_FF_daily)  # Assurez-vous que la fonction `calculate_betas` est définie
+        monthly_betas[date] = betas
+
+    # Convertir le dictionnaire en DataFrame
+    df_monthly_betas = pd.DataFrame(monthly_betas.items(), columns=['Date', 'Betas'])
+
+    # Convertir la colonne 'Betas' de tableaux numpy en listes
+    df_monthly_betas['Betas'] = df_monthly_betas['Betas'].apply(list)
+
+    # Définir la colonne 'Date' comme index
+    df_monthly_betas.set_index('Date', inplace=True)
+
+    # Convertir chaque élément de la liste 'Betas' en une colonne distincte
+    df_monthly_betas = df_monthly_betas['Betas'].apply(pd.Series)
+
+    # Faire correspondre l'index de df_monthly_betas à df_48ind
+    df_monthly_betas.index = df_48ind.index
+
+    # Faire correspondre les noms des colonnes de df_monthly_betas à df_48ind
+    df_monthly_betas.columns = df_48ind.columns
+
+    return df_monthly_betas
+
+
+def calculate_idiosyncratic_volatility(start_date, end_date, df_daily_ret_reshaped, df_FF_daily):
+    # Sélectionner les données pour la plage de dates spécifiée
+    df_daily_ret_selected = df_daily_ret_reshaped.loc[start_date:end_date]
+    df_FF_daily_selected = df_FF_daily.loc[start_date:end_date]
+
+    # Maintenant, vous pouvez utiliser df_daily_ret_selected et df_FF_daily_selected pour votre régression
+    Rft = df_FF_daily_selected['RF']
+    Rm_t = df_FF_daily_selected['Mkt-RF']
+    SMB = df_FF_daily_selected['SMB']
+    HML = df_FF_daily_selected['HML']
+
+    volatilities = []  # Create an empty list to store the volatilities
+
+    for column in df_daily_ret_selected.columns:
+        Ri_t = df_daily_ret_selected[column]
+
+        Y = Ri_t - Rft
+        X = pd.concat([Rm_t, SMB, HML], axis=1)
+
+        X = sm.add_constant(X)
+
+        model = sm.OLS(Y, X)
+        results = model.fit()
+
+        residuals = results.resid
+        volatility = np.std(residuals)
+
+        volatilities.append(volatility)  # Add the volatility to the list
+
+    # Convert the list of volatilities to a numpy array
+    volatilities = np.array(volatilities)
+
+    return volatilities
+
+
+def calculate_monthly_volatility(df_daily_ret, df_FF_daily_3factors_aligned, df_48Ind):
+    """
+    Calcule les volatilités idiosyncratiques mensuelles pour chaque mois à partir des données quotidiennes des rendements, 
+    des facteurs Fama-French quotidiens alignés et des 48 industries.
+
+    Args:
+    - df_daily_ret_reshaped (pd.DataFrame): DataFrame contenant les rendements quotidiens reshaped.
+    - df_daily_ret (pd.DataFrame): DataFrame contenant les rendements quotidiens.
+    - df_FF_daily_3factors_aligned (pd.DataFrame): DataFrame contenant les facteurs quotidiens de Fama-French alignés.
+    - df_48Ind (pd.DataFrame): DataFrame contenant des données pour les 48 industries.
+
+    Returns:
+    - pd.DataFrame: DataFrame contenant les volatilités idiosyncratiques mensuelles pour chaque mois, 
+                    avec les dates comme index et les industries comme colonnes.
+    """
+    
+    
+    # Get the first and last date in the data
+    first_date = df_daily_ret.index.min()
+    last_date = df_daily_ret.index.max()
+
+    # Create a date range for each month in the data
+    date_range = pd.date_range(start=first_date, end=last_date, freq='M')
+
+    # Calculate the volatilities for each month
+    monthly_volatilities = {}
+    for date in date_range:
+        start_date = date - pd.DateOffset(months=1) + pd.DateOffset(days=1)
+        end_date = date
+        volatilities = calculate_idiosyncratic_volatility(start_date, end_date, df_daily_ret, df_FF_daily_3factors_aligned)
+        monthly_volatilities[date] = volatilities
+
+    # Convert the dictionary to a DataFrame
+    df_monthly_vol = pd.DataFrame(monthly_volatilities.items(), columns=['Date', 'Betas'])
+
+    # Convert the Betas column from numpy arrays to lists
+    df_monthly_vol['Betas'] = df_monthly_vol['Betas'].apply(list)
+
+    # Set the Date column as the index
+    df_monthly_vol.set_index('Date', inplace=True)
+
+    # Convert each item in the 'Betas' list to a separate column
+    df_monthly_vol = df_monthly_vol['Betas'].apply(pd.Series)
+
+    # Set the index of df_monthly_vol to match df_48Ind
+    df_monthly_vol.index = df_48Ind.index
+
+    # Set the column names of df_monthly_vol to match df_48Ind
+    df_monthly_vol.columns = df_48Ind.columns
+
+    return df_monthly_vol
+
+
+def select_extreme_values(row, num_values=5):
+    """
+    Sélectionne les valeurs extrêmes dans une ligne (série) en fonction des valeurs triées dans l'ordre décroissant, 
+    et retourne les premières valeurs les plus élevées et les dernières les plus basses, pour une caractéristique donnée.
+
+    Args:
+    - row (pd.Series): Une ligne (série) contenant les valeurs des caractéristiques à trier.
+    - num_values (int, optional): Le nombre d'industries avec la caractéristique extrêmes à sélectionner. Fixé à 5 par défaut.
+
+    Returns:
+    - tuple: Un tuple contenant deux pandas Series, les premières "num_values" valeurs les plus élevées 
+            et les dernières "num_values" valeurs les plus basses pour chaque caractéristique donnée.
+    """
+    
+    
+    # Triage dans l'ordre décroissant des caractéristiques (plus grande à plus petite) 
+    sorted_row = row.sort_values(ascending=False)
+    
+    # Sélection des premières "num_values" valeurs les plus élevées
+    top_values = sorted_row.head(num_values)
+    
+    # Sélection des dernières "num_values" valeurs les plus basses
+    bottom_values = sorted_row.tail(num_values)
+    
+    return top_values, bottom_values
+
+
+def get_returns(caracteristic, df_ret_shift, num_positions, weight_type='ew'):
+    """
+    Calcule les rendements totaux pour les positions longues et courtes basées sur les caractéristiques données, 
+    les rendements des industries et le nombre de positions à prendre.
+
+    Args:
+    - caracteristic (pd.DataFrame): DataFrame contenant les caractéristiques de chaque industrie, 
+                                    avec les dates en index et les industries en colonnes.
+    - df_ret_shift (pd.DataFrame): DataFrame contenant les rendements des industries, avec un décalage de t+1 (shifted by 1), 
+                                    pour calculer les rendements totaux pour les positions longues et courtes.
+    - num_positions (int): Nombre de positions à prendre (par exemple, 5 industries extrêmes de chaque côté pour un total de 10 positions à chaque fois).
+    - weight_type (str, optional): Type de pondération à utiliser, 'ew' pour équipondéré ou 'vw' pour pondération par capitalisation boursière (marketcap).
+                                    Par défaut, 'ew', équipondéré.
+
+    Returns:
+    - list: Une liste contenant les rendements totaux pour les positions longues et courtes à la fin de chaque mois t+1. 
+    """
+    
+    
+    # Sélectionne les valeurs extrêmes pour chaque mois t 
+    top_bottom_values = caracteristic.apply(select_extreme_values, axis=1)
+    
+    returns = []  # Initialise une liste pour stocker les rendements individuels pour chaque mois
+    total_returns = []  # Initialise une liste pour stocker les rendements totaux pour chaque mois
+    
+    # Itération à travers toutes les valeurs extrêmes pour chaque mois 
+    for date, values in top_bottom_values.items():
+        top_indices, bottom_indices = values[0].index, values[1].index
+        
+        # Calcul des rendements pour les positions longues et courtes en fonction du type de pondération spécifié 
+        if weight_type == 'ew':
+            weight = 1.0 / num_positions  # Poids égal pour chaque position
+            top_returns = df_ret_shift.loc[date, top_indices] * weight
+            bottom_returns = df_ret_shift.loc[date, bottom_indices] * weight * -1  # Les positions courtes ont un poids négatif
+        elif weight_type == 'vw':
+            top_values = df_ret_shift.loc[date, top_indices]
+            bottom_values = df_ret_shift.loc[date, bottom_indices]
+            top_weights = top_values.abs() / top_values.abs().sum()  # Pondération par capitalisation boursière absolue 
+            bottom_weights = bottom_values.abs() / bottom_values.abs().sum()  # Pondération par capitalisation boursière absolue 
+            top_returns = top_values * top_weights 
+            bottom_returns = bottom_values * bottom_weights * -1  # Les positions courtes ont un poids négatif 
+        else:
+            raise ValueError("weight_type must be either 'ew' or 'vw'")
+        
+        # Ajoute les rendements longs et courts à la liste des rendements
+        returns.append((top_returns.sum(), bottom_returns.sum()))  
+    
+    # Calcule les rendements totaux pour chaque mois
+    total_returns = [sum(x) for x in returns]  
+
+    return total_returns
+
+
+def get_sharpe_and_constants(caracteristic, df_ret_shift, num_positions, df_FF_daily_3factors_aligned, df_FF_5, weight_type='ew'):
+    """
+    Calcule le ratio de Sharpe et les constantes de régression (Alpha de Jensen) pour les rendements totaux des stratégies 'EW' et 'VW' en fonction des caractéristiques données,
+    des rendements journaliers des 48 industries, du nombre de positions longues et courtes à prendre, du taux sans risque moyen annualisé selon la formule du (CAGR) et des 3, 4 et 5 facteurs de Fama-French.
+
+    Args:
+    - caracteristic (pd.DataFrame): DataFrame contenant les caractéristiques de chaque industrie, 
+                                    avec les dates en index et les industries en colonnes.
+    - df_ret_shift (pd.DataFrame): DataFrame contenant les rendements des industries, avec un décalage de t+1, 
+                                    pour calculer les rendements totaux pour les positions longues et courtes.
+    - num_positions (int): Nombre de positions à prendre (par exemple, 5 industries extrêmes de chaque côté pour un total de 10 positions à chaque fois).
+    - rf (float): Taux sans risque mensuel moyen sur la période.
+    - df_FF_5 (pd.DataFrame): DataFrame contenant les 5 facteurs de Fama-French, 
+                                utilisés dans la régression pour calculer les constantes.
+    - weight_type (str, optional): Type de pondération à utiliser, 'ew' pour équipondéré ou 'vw' pour pondération par capitalisation boursière.
+                                    Par défaut, 'ew', équipondéré.
+
+    Returns:
+    - tuple: Un tuple contenant le ratio de Sharpe et les constantes de régression pour 3, 4 et 5 facteurs.
+    """
+    # Calculer le rendement annualisé du taux sans risque, selon la formule du taux de rendement annuel composé (CAGR)
+    mean_rf_monthly = df_FF_daily_3factors_aligned['RF'].mean()
+    mean_rf_annual = ((1 + mean_rf_monthly/100) ** 12 - 1)
+    mean_rf_annual*=100
+
+    # Obtenir les rendements totaux pour les positions longues et courtes 
+    # en fonction du triage des caractéristiques et du type de pondération
+    total_returns = get_returns(caracteristic, df_ret_shift, num_positions, weight_type)
+
+    # Convertir la liste en pandas Series 
+    total_returns_series = pd.Series(total_returns)
+    
+    # Calculer la moyenne et l'écart-type des rendements mensuels du portefeuille pour la période indiquée
+    mean_return_monthly = total_returns_series.mean()
+    std_return_monthly = total_returns_series.std()
+
+    # Annualiser la moyenne et l'écart-type des rendements mensuels, avec la formule du taux de rendement annuel composé (CAGR)
+    mean_return_annualized = (1 + mean_return_monthly/100) ** 12 - 1 
+    std_return_annualized = std_return_monthly * np.sqrt(12) 
+
+    # Convertir en pourcentage pour faciliter les manipulations par la suite
+    mean_return_annualized = mean_return_annualized * 100 
+
+    # Calculer le ratio de Sharpe pour les rendements totaux 
+    sharpe_ratio = (mean_return_annualized - mean_rf_annual) / std_return_annualized
+
+    # Convertir la liste en pandas DataFrame pour la régression pour obtenir les alpha de Jensen 
+    total_returns_df = pd.DataFrame(total_returns, columns=['returns'])
+
+    # Réinitialiser l'index pour les deux DataFrames 
+    total_returns_df = total_returns_df.reset_index(drop=True)
+    df_FF_5 = df_FF_5.reset_index(drop=True)
+
+    # Régression avec 3, 4 et 5 facteurs de Fama-French pour obtenir les constantes (Alpha de Jensen)
+    constants = []
+    for num_factors in [3, 4, 5]:
+        factors = sm.add_constant(df_FF_5.iloc[:, :num_factors])
+        model = sm.OLS(total_returns_df, factors)
+        results = model.fit()
+        constants.append(results.params['const'])
+
+    # Retourner le ratio de Sharpe et les constantes de régression pour 3, 4 et 5 facteurs 
+    return sharpe_ratio, constants
+
 
 
 # Partie C 
