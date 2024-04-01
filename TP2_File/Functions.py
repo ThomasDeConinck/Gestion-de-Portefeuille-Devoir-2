@@ -1284,11 +1284,11 @@ def Expanding_window_optimization_last_period_initial_theta(data, mkt_weights, M
         return (1 + rp) ** (1 - gamma) / (1 - gamma)
 
     # Define the objective function to be maximized, equation(6) from article
-    def objective(theta, mkt_weights, MC, BM, MOM, returns, T, N, M):
+    def objective(theta, mkt_weights, MC_standardized, BM_standardized, MOM_standardized, returns, T, N, M):
         rp = [sum((mkt_weights.iloc[t, i] + 
-                   (1/N) * (theta[0] * MC.iloc[t, i] + 
-                            theta[1] * BM.iloc[t, i] + 
-                            theta[2] * MOM.iloc[t, i])) 
+                   (1/N) * (theta[0] * MC_standardized.iloc[t, i] + 
+                            theta[1] * BM_standardized.iloc[t, i] + 
+                            theta[2] * MOM_standardized.iloc[t, i])) 
                   * (returns.iloc[t+1, i] if t+1 < T else 0)
                 for i in range(N)) for t in range(T)]
         utility = sum(CRRA_utility(r) for r in rp)
@@ -1299,8 +1299,10 @@ def Expanding_window_optimization_last_period_initial_theta(data, mkt_weights, M
     start_year = data.index.min() # Date de début fixée à la première date dans les données de rendement
     initial_end_year = pd.to_datetime('1973-12-01') # Date de fin initiale fixée à décembre 1973
     current_end_year = initial_end_year # Date de fin courante, commence par initial_end_year et sera ajustée dans la boucle
-    
-    
+
+    # Initial guess for theta using the average regression coefficients for the entire period 
+    optimal_initial_theta = calculate_initial_regression_coefficients(48, 3, data, MC_standardized, BM_standardized, MOM_standardized) 
+
     while current_end_year <= data.index.max(): # Boucle jusqu'à la dernière date dans les données de rendement 
         
         # Extraire les composantes nécessaires pour l'optimisation des coefficients pour la période sélectionnée dans la window
@@ -1313,17 +1315,13 @@ def Expanding_window_optimization_last_period_initial_theta(data, mkt_weights, M
         M = 3
         T = len(returns_filtred)
 
-        # Initial guess for theta using the average regression coefficients for the entire period 
-        optimal_initial_theta = calculate_initial_regression_coefficients(N, M, data, MC_standardized, BM_standardized, MOM_standardized) 
-    
         # Run the optimization for the current period
         result = minimize(objective, optimal_initial_theta, args=(mkt_weights_filtred, MC_filtred, BM_filtred, MOM_filtred, returns_filtred, T, N, M), method='SLSQP')
 
         # Store the optimal theta for the current period
         optimal_thetas[current_end_year] = result.x if result.success else None
 
-        # Updater le theta initial pour la prochaine itération de la fenêtre en utilisant le theta optimal de la dernière itération
-        # pour affiner la convergence vers une solution optimale pour les thetas optimaux, plus stable dans le temps
+        # Update initial theta for the next iteration of window by using the optimal theta from the last iteration 
         if result.success:
             optimal_initial_theta = result.x
 
