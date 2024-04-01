@@ -1335,7 +1335,8 @@ def Expanding_window_optimization_last_period_initial_theta(data, mkt_weights, M
 
 def plot_theta_series(optimal_thetas):
     """
-    Cette fonction convertit le dictionnaire des coefficients optimaux en DataFrame et trace une série temporelle pour chaque coefficient.
+    Cette fonction convertit le dictionnaire des coefficients optimaux en DataFrame et trace une série temporelle pour chaque coefficient, 
+    pour montrer comment ils évoluent à travers le temps (T).
 
     Paramètres:
     - optimal_thetas : Dictionnaire contenant les coefficients optimaux pour chaque période de temps.
@@ -1344,20 +1345,22 @@ def plot_theta_series(optimal_thetas):
     - Plot : Série temporelle pour chaque coefficient theta à travers le temps (T).
     """
     
+    # Liste des noms des coefficients
+    coeff_names = ['Coefficient Market Cap', 'Coefficient BM', 'Coefficient MOM']
     
     # Convertir le dictionnaire en DataFrame 
     df = pd.DataFrame.from_dict(optimal_thetas, orient='index')
 
     # Tracer chaque colonne du DataFrame (chaque coefficient theta optimisés)
-    plt.figure(figsize=(12,6))
+    plt.figure(figsize=(15,8))  # Augmenter la taille de la figure
     for i in range(df.shape[1]):
-        plt.plot(df.index, df[i], label=f'Theta {i+1}')
+        plt.plot(df.index, df[i], label=coeff_names[i])
 
     plt.title('Séries temporelles des coefficients theta')
     plt.legend()
     plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
     plt.gca().xaxis.set_major_locator(mdates.YearLocator())
-    plt.gcf().autofmt_xdate()
+    plt.gcf().autofmt_xdate(rotation=45)  # Ajuster la rotation des étiquettes de l'axe des x
 
     plt.show()
     
@@ -1432,7 +1435,7 @@ def calculate_optimized_weights_monthly(mkt_weights, MC_standardized, BM_standar
         BM_standardized_month = BM_standardized.loc[current_month]
         MOM_standardized_month = MOM_standardized.loc[current_month]
         
-        # Appliquer les coefficients theta constants à travers les actifs et dans le temps
+        # Appliquer les coefficients theta à travers les actifs et dans le temps
         optimized_weights = portfolio_weight_function(mkt_weights_for_month, MC_standardized_month, BM_standardized_month, MOM_standardized_month, optimal_thetas[current_year])
         
         optimized_weights_monthly[current_month] = optimized_weights
